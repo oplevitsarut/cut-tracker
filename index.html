@@ -53,6 +53,9 @@ label{display:block;font-size:13px;color:var(--muted);margin:12px 0 6px;font-wei
 input,select,button{font:inherit;color:inherit}
 input,select{width:100%;min-height:46px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--bg);outline:none;font-size:16px}
 input:focus,select:focus{border-color:var(--accent)}
+input[type=date],input[type=datetime-local]{-webkit-appearance:none;appearance:none;display:block;min-width:0;max-width:100%;text-align:left;line-height:24px}
+input::-webkit-date-and-time-value{text-align:left;margin:0}
+input::-webkit-datetime-edit{padding:0}
 button{min-height:46px;padding:10px 16px;border:0;border-radius:12px;background:var(--accent);color:#fff;font-weight:600;cursor:pointer}
 button:active{transform:scale(.98)}
 button.ghost{background:var(--accent-soft);color:var(--accent)}
