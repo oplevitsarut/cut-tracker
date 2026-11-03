@@ -55,6 +55,11 @@ input,select{width:100%;min-height:46px;padding:10px 12px;border:1px solid var(-
 input:focus,select:focus{border-color:var(--accent)}
 input[type=date],input[type=datetime-local]{-webkit-appearance:none;appearance:none;display:block;min-width:0;max-width:100%;text-align:left;line-height:24px}
 input::-webkit-date-and-time-value{text-align:left;margin:0}
+.datebox{position:relative;min-height:46px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--bg);
+  display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:16px;overflow:hidden;min-width:0}
+.datebox span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.datebox::after{content:'▾';color:var(--faint);font-size:12px}
+.datebox input{position:absolute;inset:0;width:100%;height:100%;min-height:0;opacity:0;border:0;padding:0;margin:0}
 input::-webkit-datetime-edit{padding:0}
 button{min-height:46px;padding:10px 16px;border:0;border-radius:12px;background:var(--accent);color:#fff;font-weight:600;cursor:pointer}
 button:active{transform:scale(.98)}
@@ -422,7 +427,7 @@ function renderLog(){ setTimeout(renderPhoto,0);
   ${logDate===today()?todayCard():''}
   <div class="row" style="margin-bottom:12px">
     <button class="ghost icon" onclick="logDate=addDays(logDate,-1);renderLog()">‹</button>
-    <input type="date" value="${logDate}" onchange="logDate=this.value||today();renderLog()">
+    ${dateField('date',logDate,'onchange="logDate=this.value||today();renderLog()"')}
     <button class="ghost icon" onclick="logDate=addDays(logDate,1);renderLog()">›</button>
   </div>
   <div class="card">
@@ -586,6 +591,9 @@ function editDay(i){ const p=S.plan[i];
 
 function hm(ms){ const m=Math.max(0,Math.floor(ms/6e4)); return Math.floor(m/60)+'h '+String(m%60).padStart(2,'0')+'m'; }
 const dtl = ts => { const d=new Date(ts-new Date(ts).getTimezoneOffset()*6e4); return d.toISOString().slice(0,16); };
+function fmtField(v,type){ if(!v) return 'Pick a date'; if(type==='date') return dlabel(v)+' '+v.slice(0,4);
+  const d=new Date(v); return d.toLocaleDateString(undefined,{weekday:'short'})+' '+d.getDate()+' '+MON[d.getMonth()]+', '+d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'}); }
+function dateField(type,value,attrs=''){ return `<div class="datebox"><span>${fmtField(value,type)}</span><input type="${type}" value="${value}" ${attrs} oninput="this.previousElementSibling.textContent=fmtField(this.value,'${type}')"></div>`; }
 const fromDtl = v => v? new Date(v).getTime() : NaN;
 let fastForm=null; // 'start' | 'end' | 'past'
 function renderFast(){
@@ -601,20 +609,20 @@ function renderFast(){
       <div class="bar" style="margin-bottom:8px"><div id="fbar" style="width:${pct}%;background:${pct>=100?C('--good'):C('--accent')}"></div></div>
       <div class="muted" style="text-align:center;font-size:14px;margin-bottom:14px" id="fnote">${pct>=100?'16 hours reached. Eat when you’re ready.':'16 hours at <b style="color:var(--text)">'+tt(S.fastStart+FAST_H*36e5)+'</b>'}</div>
       <button class="big stop" onclick="endFast()">Finish fast now</button>
-      ${fastForm==='start'?`<label>Started at</label><div class="row"><input type="datetime-local" id="fs" value="${dtl(S.fastStart)}"><button style="flex:0 0 auto" onclick="setFastStart()">Save</button></div>`
-       :fastForm==='end'?`<label>Finished at</label><div class="row"><input type="datetime-local" id="fe" value="${dtl(Date.now())}"><button style="flex:0 0 auto" onclick="endFastAt()">Finish</button></div>`
+      ${fastForm==='start'?`<label>Started at</label><div class="row">${dateField('datetime-local',dtl(S.fastStart),'id="fs"')}<button style="flex:0 0 auto" onclick="setFastStart()">Save</button></div>`
+       :fastForm==='end'?`<label>Finished at</label><div class="row">${dateField('datetime-local',dtl(Date.now()),'id="fe"')}<button style="flex:0 0 auto" onclick="endFastAt()">Finish</button></div>`
        :`<div class="row" style="margin-top:10px"><button class="ghost small" onclick="fastForm='start';renderFast()">Change start time</button><button class="ghost small" onclick="fastForm='end';renderFast()">Finished earlier?</button></div>`}`
     :`<div class="timer muted">0h 00m</div>
       <p class="muted" style="text-align:center;font-size:14px;margin-top:0">Tap after your last meal of the day.</p>
       <button class="big" onclick="startFast()">Start fast now</button>
-      ${fastForm==='start'?`<label>Started at</label><div class="row"><input type="datetime-local" id="fs" value="${dtl(Date.now())}"><button style="flex:0 0 auto" onclick="setFastStart()">Start</button></div>`
+      ${fastForm==='start'?`<label>Started at</label><div class="row">${dateField('datetime-local',dtl(Date.now()),'id="fs"')}<button style="flex:0 0 auto" onclick="setFastStart()">Start</button></div>`
        :`<div class="row" style="margin-top:10px"><button class="ghost small" onclick="fastForm='start';renderFast()">Started earlier? Set the time</button></div>`}`}
   </div>
   <div class="card"><h2>Calendar <span class="meta">${streak(fastStatus)?'🔥 '+streak(fastStatus)+' day streak':''}</span></h2>${calendar('fast', fastStatus)}
     <p class="note">A day counts when a fast of 16 hours or more finishes on it.</p></div>
   <div class="card"><h2>Recent fasts <button class="ghost small" onclick="fastForm=fastForm==='past'?null:'past';renderFast()">${fastForm==='past'?'Close':'+ Add past fast'}</button></h2>
-    ${fastForm==='past'?`<div class="row"><div><label>Started</label><input type="datetime-local" id="ps" value="${dtl(Date.now()-17*36e5)}"></div></div>
-      <div class="row"><div><label>Finished</label><input type="datetime-local" id="pe" value="${dtl(Date.now()-36e5)}"></div></div>
+    ${fastForm==='past'?`<div class="row"><div><label>Started</label>${dateField('datetime-local',dtl(Date.now()-17*36e5),'id="ps"')}</div></div>
+      <div class="row"><div><label>Finished</label>${dateField('datetime-local',dtl(Date.now()-36e5),'id="pe"')}</div></div>
       <button style="width:100%;margin:12px 0 6px" onclick="addPastFast()">Save fast</button>`:''}
     ${recent.length?`<ul class="list">${recent.map(f=>{const h=(f.end-f.start)/36e5;return `<li><span style="font-size:14px">${tf(f.start)} → ${tt(f.end)}</span><span style="display:flex;align-items:center;gap:4px;flex:0 0 auto"><b class="${h>=FAST_H?'good':'bad'}">${hm(f.end-f.start)}</b><button class="x" onclick="delFast(${f.i})">✕</button></span></li>`;}).join('')}</ul>`:'<p class="muted" style="margin:0">No fasts yet.</p>'}
   </div>`;
@@ -635,7 +643,7 @@ function delFast(i){ if(!confirm('Delete this fast?')) return; S.fasts.splice(i,
 setInterval(()=>{ if(S.fastStart!=null && !fastForm && !$('#tab-fast').classList.contains('hidden')){ const t=$('#ftimer'); if(t) t.textContent=hm(Date.now()-S.fastStart);
   const el=Date.now()-S.fastStart; if(el>=FAST_H*36e5 && $('#fnote') && !/reached/.test($('#fnote').textContent)) renderFast(); } }, 15000);
 function renderSettings(){
-  const st=S.settings; const f=(k,l,type='text',extra='')=>`<label>${l}</label><input id="s-${k}" type="${type}" value="${esc(st[k])}" ${extra}>`;
+  const st=S.settings; const f=(k,l,type='text',extra='')=>type==='date'?`<label>${l}</label>${dateField('date',esc(st[k]),`id="s-${k}"`)}`:`<label>${l}</label><input id="s-${k}" type="${type}" value="${esc(st[k])}" ${extra}>`;
   $('#tab-settings').innerHTML=`
   <div class="head"><h1>Settings</h1></div>
   <div class="card">
