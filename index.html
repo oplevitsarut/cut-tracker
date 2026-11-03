@@ -90,12 +90,12 @@ svg text{fill:var(--muted);font-size:10px}
 // ---------- Storage ----------
 const KEY = 'cuttracker.v1';
 const DEFAULT_PLAN = [
-  {name:'Zone 2 jog', detail:'35 min easy, able to talk in full sentences', type:'z2'},
+  {name:'Zone 2 jog', detail:'35 min easy, able to talk in full sentences', type:'z2', min:35},
   {name:'Strength A', detail:'Squat, push-up/bench, row, plank. 3 sets of 8-12', type:'strength'},
-  {name:'Zone 2 jog', detail:'40 min easy', type:'z2'},
+  {name:'Zone 2 jog', detail:'40 min easy', type:'z2', min:40},
   {name:'Strength B', detail:'Deadlift/hinge, overhead press, pulldown, lunges. 3 sets of 8-12', type:'strength'},
   {name:'Rest or walk', detail:'Optional 30 min walk', type:'rest'},
-  {name:'Long zone 2 jog', detail:'50-60 min easy', type:'z2'},
+  {name:'Long zone 2 jog', detail:'50-60 min easy', type:'z2', min:50, long:true},
   {name:'Rest', detail:'Recovery day', type:'rest'},
 ]; // Monday first
 const today = () => iso(new Date());
@@ -107,7 +107,8 @@ function load(){
   if(!s) s={};
   s.settings = Object.assign({sex:'male', age:25, height:177, startWeight:113.5, goalWeight:83.5,
     startDate:'2026-11-03', targetDate:'2027-05-03', activity:1.2, calorieTarget:'', proteinTarget:''}, s.settings||{});
-  s.days = s.days||{}; s.plan = s.plan||DEFAULT_PLAN.map(p=>({...p})); s.done = s.done||{}; s.fasts = s.fasts||[]; if(s.fastStart===undefined) s.fastStart=null;
+  s.days = s.days||{}; s.plan = s.plan||DEFAULT_PLAN.map(p=>({...p})); s.plan.forEach((p,i)=>{ const d=DEFAULT_PLAN[i]; if(p.min===undefined && d && d.min && p.name===d.name && p.detail===d.detail){ p.min=d.min; if(d.long) p.long=true; } });
+  s.done = s.done||{}; s.fasts = s.fasts||[]; if(s.fastStart===undefined) s.fastStart=null;
   if(!s.settings.age) s.settings.age=25;
   return s;
 }
@@ -410,11 +411,24 @@ function addPhotoMeal(){ const k=num('#pk'); if(k===''){toast('Add calories');re
   day(logDate).meals.push({name:$('#pn').value.trim()||'Meal',kcal:k,protein:num('#pp'),photo:true}); pending=null; save(); toast('Meal added'); renderLog(); }
 function delItem(k,i){ day(logDate)[k].splice(i,1); save(); renderLog(); }
 
+// Progression: +5 min on each jog every 2 weeks, an easier week every 4th week, caps 60 / 90 min
+function weekNo(d){ return Math.max(1, Math.floor((dnum(mondayOf(d))-dnum(mondayOf(S.settings.startDate)))/7)+1); }
+const isDeload = w => w%4===0;
+function sessionFor(i, d){
+  const p=S.plan[i], w=weekNo(d);
+  if(p.type==='z2' && p.min){
+    let m=p.min+5*Math.floor((w-1)/2); m=Math.min(m, p.long?90:60); if(isDeload(w)) m=Math.max(20,m-10);
+    return {...p, detail:`${m} min easy${p.long?' (long run)':', able to talk in full sentences'}`};
+  }
+  if(p.type==='strength'){ const sets=w<=2?2:3;
+    return {...p, detail:p.detail.replace(/3 sets of 8-12/, isDeload(w)?`${sets-1} sets of 8-12 (easy week)`:`${sets} sets of 8-12`)}; }
+  return p;
+}
 function renderPlan(){
   const mon=mondayOf(today()), [lo,hi]=zone2Range(); const names=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
   const done=[...Array(7)].filter((_,i)=>isDone(addDays(mon,i))).length;
   const planned=S.plan.filter(p=>p.type!=='rest').length;
-  const ti=(new Date().getDay()+6)%7, tp=S.plan[ti], tDone=isDone(today());
+  const ti=(new Date().getDay()+6)%7, tp=sessionFor(ti,today()), tDone=isDone(today()), wk=weekNo(today());
   $('#tab-plan').innerHTML=`
   <h1>Workout</h1>
   <div class="card">
@@ -423,7 +437,7 @@ function renderPlan(){
     <button class="big ${tDone?'done':''}" onclick="toggleDone()">${tDone?'✓ Done today (tap to undo)':'I did my workout'}</button>
   </div>
   <div class="card"><h2>Calendar · ${streak(workoutStatus)} day streak</h2>${calendar('plan', workoutStatus)}</div>
-  <h1 style="margin-top:18px">This week</h1>
+  <h1 style="margin-top:18px">Week ${wk}${isDeload(wk)?' · easier week':''}</h1>
   <div class="card">
     <div class="row"><b>${done} of ${planned} sessions done</b></div>
     <div class="bar" style="margin-top:8px"><div style="width:${Math.min(100,done/planned*100)}%"></div></div>
@@ -434,19 +448,19 @@ function renderPlan(){
     <p class="muted" style="font-size:13px;margin:6px 0 0">If your Garmin has its own zone 2 set from a test, use that instead. Walk-jog intervals are fine when your heart rate drifts above the range.</p>
   </div>
   <div class="card">
-    ${S.plan.map((p,i)=>{ const d=addDays(mon,i); const isT=d===today();
+    ${S.plan.map((p0,i)=>{ const d=addDays(mon,i); const isT=d===today(); const p=sessionFor(i,d);
       return `<div class="day ${isT?'today':''}">
         <input type="checkbox" ${isDone(d)?'checked':''} ${p.type==='rest'?'disabled':''} onchange="S.done['${d}']=this.checked;save();renderPlan()">
         <div style="flex:1"><div class="name">${names[i]} · ${esc(p.name)}</div><div class="muted" style="font-size:13px">${esc(p.detail)}</div></div>
         <button class="x" onclick="editDay(${i})">Edit</button></div>`; }).join('')}
   </div>
-  <p class="muted" style="font-size:13px">Add about 5 minutes to each jog every 2 weeks while it feels easy.</p>`;
+  <p class="muted" style="font-size:13px">The plan grows by itself: jogs get 5 minutes longer every 2 weeks (up to 60 min, or 90 for the long run), strength goes from 2 to 3 sets after week 2, and every 4th week is easier so your body can recover. In strength sessions, when you can do 12 reps on every set, go a little heavier. Editing a day fixes it at what you type.</p>`;
 }
 function toggleDone(){ const d=today(); S.done[d]=!isDone(d); save(); renderPlan(); }
 function editDay(i){ const p=S.plan[i];
   const n=prompt('Workout name',p.name); if(n===null) return;
   const d=prompt('Details',p.detail); if(d===null) return;
-  p.name=n; p.detail=d; p.type=/rest/i.test(n)?'rest':/zone|jog|run/i.test(n)?'z2':'strength'; save(); renderPlan(); }
+  p.name=n; p.detail=d; delete p.min; delete p.long; p.type=/rest/i.test(n)?'rest':/zone|jog|run/i.test(n)?'z2':'strength'; save(); renderPlan(); }
 
 function hm(ms){ const m=Math.max(0,Math.floor(ms/6e4)); return Math.floor(m/60)+'h '+String(m%60).padStart(2,'0')+'m'; }
 function renderFast(){
