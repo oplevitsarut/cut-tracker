@@ -291,7 +291,7 @@ function renderDash(){
 }
 
 let logDate = today();
-function renderLog(){
+function renderLog(){ setTimeout(renderPhoto,0);
   const x=day(logDate), t=calorieTarget(), e=eaten(logDate), p=protein(logDate), def=deficit(logDate);
   $('#tab-log').innerHTML=`
   <h1>Log</h1>
@@ -312,7 +312,11 @@ function renderLog(){
     <div class="row"><b>${fmt0(e)} / ${fmt0(t)} kcal</b><span class="muted" style="text-align:right">${fmt0(p)} / ${proteinTarget()} g protein</span></div>
     <div class="bar" style="margin:6px 0"><div style="width:${Math.min(100,e/t*100)}%;background:${e>t?C('--bad'):C('--accent')}"></div></div>
     <ul class="list">${x.meals.map((m,i)=>`<li><span>${esc(m.name)} <span class="muted">· ${fmt0(m.kcal)} kcal${m.protein?` · ${m.protein} g`:''}</span></span><button class="x" onclick="delItem('meals',${i})">✕</button></li>`).join('')}</ul>
-    <label>Add meal</label>
+    <div id="photoBox" style="margin-top:10px">
+      <button class="ghost" style="width:100%" onclick="$('#photo').click()">📷 Snap a meal to estimate calories</button>
+      <input type="file" id="photo" accept="image/*" capture="environment" class="hidden" onchange="photoPicked(this.files[0]);this.value=''">
+    </div>
+    <label>Or add by hand</label>
     <input id="mn" placeholder="e.g. Chicken rice">
     <div class="row" style="margin-top:8px">
       <input id="mk" inputmode="numeric" placeholder="Calories">
@@ -348,6 +352,62 @@ function addMeal(){ const n=$('#mn').value.trim(), k=num('#mk'); if(!n||k===''){
 function addWorkout(){ const s=$('#wt'); const m=num('#wm'); if(m===''){toast('Add minutes');return;}
   day(logDate).workouts.push({type:s.value,label:s.options[s.selectedIndex].text,minutes:m,kcal:num('#wk')});
   save(); renderLog(); }
+// ---------- Photo calorie estimate (Claude API, called straight from the phone) ----------
+const KEY_STORE='cuttracker.apikey';
+function apiKey(){ try{ return localStorage.getItem(KEY_STORE)||''; }catch(e){ return ''; } }
+let pending=null; // {img, note, result}
+function photoPicked(file){
+  if(!file) return;
+  if(!apiKey()){ toast('Add your API key in Settings first'); return; }
+  shrink(file).then(img=>{ pending={img, note:'', result:null}; renderPhoto(); });
+}
+function shrink(file){ return new Promise((ok,bad)=>{ const r=new FileReader(); r.onerror=bad; r.onload=()=>{ const im=new Image(); im.onerror=bad;
+  im.onload=()=>{ const m=1024, k=Math.min(1,m/Math.max(im.width,im.height)); const c=document.createElement('canvas');
+    c.width=Math.round(im.width*k); c.height=Math.round(im.height*k); c.getContext('2d').drawImage(im,0,0,c.width,c.height);
+    ok(c.toDataURL('image/jpeg',0.8)); }; im.src=r.result; }; r.readAsDataURL(file); }); }
+function renderPhoto(){
+  const b=$('#photoBox'); if(!b||!pending) return; const r=pending.result;
+  b.innerHTML=`<img src="${pending.img}" style="width:100%;max-height:220px;object-fit:cover;border-radius:10px;margin-bottom:8px">
+  ${r? `<ul class="list">${r.items.map(i=>`<li><span>${esc(i.food)} <span class="muted">· ${esc(i.portion)}</span></span><span>${fmt0(i.kcal)}</span></li>`).join('')}</ul>
+    ${r.note?`<p class="muted" style="font-size:13px">${esc(r.note)}</p>`:''}
+    <label>Meal</label><input id="pn" value="${esc(r.name)}">
+    <div class="row" style="margin-top:8px"><div><label>Calories</label><input id="pk" inputmode="numeric" value="${r.kcal}"></div>
+      <div><label>Protein g</label><input id="pp" inputmode="numeric" value="${r.protein}"></div></div>
+    <div class="row" style="margin-top:10px"><button class="ghost" onclick="pending=null;renderLog()">Cancel</button><button onclick="addPhotoMeal()">Add meal</button></div>`
+  : pending.busy? `<p class="muted" style="text-align:center">Estimating… (about 10–20 seconds)</p>`
+  : `<label>Anything the photo can't show? (optional)</label><input id="pnote" placeholder="e.g. large portion, fried in oil, no rice" value="${esc(pending.note)}">
+    <div class="row" style="margin-top:10px"><button class="ghost" onclick="pending=null;renderLog()">Cancel</button><button onclick="estimate()">Estimate calories</button></div>
+    ${pending.error?`<p class="bad" style="font-size:13px">${esc(pending.error)}</p>`:''}`}`;
+}
+async function estimate(){
+  pending.note=($('#pnote')||{}).value||''; pending.busy=true; pending.error=''; renderPhoto();
+  const schema={type:'object',additionalProperties:false,required:['name','kcal','protein','items','note'],properties:{
+    name:{type:'string'}, kcal:{type:'integer'}, protein:{type:'integer'}, note:{type:'string'},
+    items:{type:'array',items:{type:'object',additionalProperties:false,required:['food','portion','kcal'],
+      properties:{food:{type:'string'},portion:{type:'string'},kcal:{type:'integer'}}}}}};
+  const prompt='Estimate the calories and protein in this meal photo for a food diary. List each food you can see with a portion size and calories. '+
+    'Give a short meal name, the total calories (kcal), total protein in grams, and a one-sentence note on anything uncertain (hidden oil, sauces, portion size). '+
+    'If it is a common Thai or Asian dish, use typical restaurant portions. Lean slightly high rather than low when unsure.'+
+    (pending.note?` The person adds: "${pending.note}".`:'');
+  try{
+    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{
+      'content-type':'application/json','x-api-key':apiKey(),'anthropic-version':'2023-06-01',
+      'anthropic-beta':'server-side-fallback-2026-07-01','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:'claude-opus-5-5', max_tokens:4000, fallbacks:'default',
+        output_config:{effort:'low', format:{type:'json_schema', schema}},
+        messages:[{role:'user',content:[
+          {type:'image',source:{type:'base64',media_type:'image/jpeg',data:pending.img.split(',')[1]}},
+          {type:'text',text:prompt}]}]})});
+    const data=await res.json();
+    if(!res.ok) throw new Error(res.status===401?'API key was rejected. Check it in Settings.':(data.error&&data.error.message)||('Error '+res.status));
+    if(data.stop_reason==='refusal') throw new Error('The photo could not be analysed. Try another photo or add the meal by hand.');
+    const t=(data.content||[]).find(c=>c.type==='text'); if(!t) throw new Error('No estimate came back. Try again.');
+    pending.result=JSON.parse(t.text);
+  }catch(e){ pending.error=(e&&e.message)||'Something went wrong. Check your internet connection.'; }
+  pending.busy=false; renderPhoto();
+}
+function addPhotoMeal(){ const k=num('#pk'); if(k===''){toast('Add calories');return;}
+  day(logDate).meals.push({name:$('#pn').value.trim()||'Meal',kcal:k,protein:num('#pp'),photo:true}); pending=null; save(); toast('Meal added'); renderLog(); }
 function delItem(k,i){ day(logDate)[k].splice(i,1); save(); renderLog(); }
 
 function renderPlan(){
@@ -437,6 +497,12 @@ function renderSettings(){
     <div class="row"><div>${f('calorieTarget','Calorie target','number',`placeholder="auto: ${calorieTarget()}"`)}</div><div>${f('proteinTarget','Protein (g)','number',`placeholder="auto: ${proteinTarget()}"`)}</div></div>
     <p class="muted" style="font-size:13px">Auto calories = what you burn at your current weight (${fmt0(tdee(currentWeight()))}) minus 750, never below ${minKcal()}. Leave blank to keep it auto-updating as you lose weight.</p>
     <button style="width:100%" onclick="saveSettings()">Save settings</button>
+  </div>
+  <div class="card">
+    <h2>Photo calories</h2>
+    <p class="muted" style="font-size:13px;margin-top:0">Paste your Anthropic API key. It is kept only on this phone and is not included in backups.</p>
+    <input id="apikey" type="password" autocomplete="off" placeholder="sk-ant-..." value="${esc(apiKey())}">
+    <button class="ghost" style="width:100%;margin-top:8px" onclick="try{localStorage.setItem(KEY_STORE,$('#apikey').value.trim());toast('Key saved')}catch(e){toast('Could not save')}">Save key</button>
   </div>
   <div class="card">
     <h2>Backup</h2>
