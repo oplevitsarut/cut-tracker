@@ -108,6 +108,7 @@ function load(){
   s.settings = Object.assign({sex:'male', age:25, height:177, startWeight:113.5, goalWeight:83.5,
     startDate:'2026-11-03', targetDate:'2027-05-03', activity:1.2, calorieTarget:'', proteinTarget:''}, s.settings||{});
   s.days = s.days||{}; s.plan = s.plan||DEFAULT_PLAN.map(p=>({...p})); s.plan.forEach((p,i)=>{ const d=DEFAULT_PLAN[i]; if(p.min===undefined && d && d.min && p.name===d.name && p.detail===d.detail){ p.min=d.min; if(d.long) p.long=true; } });
+  s.runs = s.runs||{};
   s.done = s.done||{}; s.fasts = s.fasts||[]; if(s.fastStart===undefined) s.fastStart=null;
   if(!s.settings.age) s.settings.age=25;
   return s;
@@ -142,7 +143,9 @@ function exerciseKcal(d){ // Health active energy wins, otherwise logged workout
 }
 function burned(d){ return Math.round(tdee(weightOn(d)) + exerciseKcal(d)); }
 function deficit(d){ const x=S.days[d]; if(!x||!x.meals.length) return null; return burned(d)-eaten(d); }
-function z2Minutes(d){ const x=S.days[d]; return x? x.workouts.filter(w=>w.type==='z2').reduce((a,w)=>a+(+w.minutes||0),0):0; }
+function runsOn(d){ return Object.values(S.runs||{}).filter(r=>r.date===d); }
+function z2Minutes(d){ const x=S.days[d]; const logged=x? x.workouts.filter(w=>w.type==='z2').reduce((a,w)=>a+(+w.minutes||0),0):0;
+  const strava=runsOn(d).reduce((a,r)=>a+r.secs/60,0); return Math.round(Math.max(logged,strava)); }
 function zone2Range(){ const max=220-age(); return [Math.round(max*.6), Math.round(max*.7)]; }
 function weightSeries(){ return sortedDates().filter(d=>S.days[d].weight).map(d=>({d, y:+S.days[d].weight})); }
 function trend(series){ // 7-day moving average by date
@@ -155,7 +158,7 @@ function weeklyRate(){ // kg per week from trend over last 28 days
   const days=dnum(last.d)-dnum(first.d); if(days<6) return null;
   return (first.y-last.y)/days*7;
 }
-function isDone(d){ const x=S.days[d]; return S.done[d]!==undefined ? !!S.done[d] : !!(x && x.workouts.some(w=>w.type!=='other')); }
+function isDone(d){ const x=S.days[d]; return S.done[d]!==undefined ? !!S.done[d] : !!((x && x.workouts.some(w=>w.type!=='other')) || runsOn(d).length); }
 function workoutStatus(d){
   const i=(new Date(d+'T12:00:00').getDay()+6)%7, p=S.plan[i];
   if(isDone(d)) return 'hit';
@@ -437,6 +440,7 @@ function renderPlan(){
     <button class="big ${tDone?'done':''}" onclick="toggleDone()">${tDone?'✓ Done today (tap to undo)':'I did my workout'}</button>
   </div>
   <div class="card"><h2>Calendar · ${streak(workoutStatus)} day streak</h2>${calendar('plan', workoutStatus)}</div>
+  ${runCard()}
   <h1 style="margin-top:18px">Week ${wk}${isDeload(wk)?' · easier week':''}</h1>
   <div class="card">
     <div class="row"><b>${done} of ${planned} sessions done</b></div>
@@ -519,6 +523,15 @@ function renderSettings(){
     <button class="ghost" style="width:100%;margin-top:8px" onclick="try{localStorage.setItem(KEY_STORE,$('#apikey').value.trim());toast('Key saved')}catch(e){toast('Could not save')}">Save key</button>
   </div>
   <div class="card">
+    <h2>Strava</h2>
+    ${stravaTok()? `<p style="margin-top:0">Connected ✓ · ${Object.keys(S.runs).length} runs synced</p>
+      <div class="row"><button class="ghost" onclick="stravaSync(true)">Sync now</button><button class="ghost" onclick="stravaDisconnect()">Disconnect</button></div>`
+    : `<p class="muted" style="font-size:13px;margin-top:0">Create a free Strava API app (see the steps Claude sent), then paste its Client ID and Client Secret here. They stay on this phone only.</p>
+      <div class="row"><div><label>Client ID</label><input id="sid" inputmode="numeric" value="${esc(stravaCfg().id||'')}"></div>
+      <div><label>Client Secret</label><input id="ssec" type="password" autocomplete="off" value="${esc(stravaCfg().secret||'')}"></div></div>
+      <button style="width:100%;margin-top:10px" onclick="stravaConnect()">Connect Strava</button>`}
+  </div>
+  <div class="card">
     <h2>Backup</h2>
     <p class="muted" style="font-size:13px;margin-top:0">Your data lives only on this phone. Export a backup now and then (save it to Files or iCloud Drive).</p>
     <div class="row"><button class="ghost" onclick="exportData()">Export</button><button class="ghost" onclick="$('#imp').click()">Import</button></div>
@@ -533,6 +546,82 @@ function importData(file){ if(!file) return; const r=new FileReader(); r.onload=
   localStorage.setItem(KEY,JSON.stringify(d)); S=load(); renderAll(); toast('Backup restored'); }catch(e){ toast('That file is not a backup'); } }; r.readAsText(file); }
 
 // ---------- Import from iPhone Shortcut via URL: ?date=YYYY-MM-DD&weight=113.2&active=540 ----------
+// ---------- Strava ----------
+const SKEY='cuttracker.strava';
+function stravaCfg(){ try{ return JSON.parse(localStorage.getItem(SKEY))||{}; }catch(e){ return {}; } }
+function stravaSave(c){ try{ localStorage.setItem(SKEY,JSON.stringify(c)); }catch(e){} }
+function stravaTok(){ return stravaCfg().refresh_token; }
+const APP_URL = location.origin + location.pathname;
+function stravaConnect(){
+  const id=$('#sid').value.trim(), secret=$('#ssec').value.trim(); if(!id||!secret){ toast('Paste both Client ID and Secret'); return; }
+  stravaSave({id,secret});
+  location.href='https://www.strava.com/oauth/authorize?client_id='+encodeURIComponent(id)+'&response_type=code&approval_prompt=auto&scope=activity:read_all&redirect_uri='+encodeURIComponent(APP_URL);
+}
+function stravaDisconnect(){ const c=stravaCfg(); stravaSave({id:c.id,secret:c.secret}); renderSettings(); toast('Strava disconnected'); }
+async function stravaToken(body){
+  const c=stravaCfg();
+  const r=await fetch('https://www.strava.com/oauth/token',{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({client_id:c.id, client_secret:c.secret, ...body})});
+  const j=await r.json(); if(!r.ok||!j.access_token) throw new Error((j.message||'Strava sign-in failed')+(j.errors?': '+JSON.stringify(j.errors):''));
+  stravaSave({...c, access_token:j.access_token, refresh_token:j.refresh_token, expires_at:j.expires_at}); return j.access_token;
+}
+async function stravaAccess(){ const c=stravaCfg(); if(c.access_token && c.expires_at*1000>Date.now()+60000) return c.access_token;
+  return stravaToken({grant_type:'refresh_token', refresh_token:c.refresh_token}); }
+async function stravaSync(manual){
+  if(!stravaTok()) return;
+  try{
+    const tok=await stravaAccess(); const c=stravaCfg();
+    const after=c.last? c.last-3*86400 : Math.floor(Date.now()/1000)-120*86400; let page=1, added=0;
+    while(page<=5){
+      const r=await fetch(`https://www.strava.com/api/v3/athlete/activities?after=${after}&per_page=100&page=${page}`,{headers:{authorization:'Bearer '+tok}});
+      if(!r.ok) throw new Error('Strava error '+r.status); const list=await r.json(); if(!list.length) break;
+      for(const a of list){ if(!/Run/.test(a.sport_type||a.type)) continue;
+        if(!S.runs[a.id]) added++;
+        S.runs[a.id]={date:(a.start_date_local||'').slice(0,10), name:a.name, km:Math.round(a.distance/10)/100, secs:a.moving_time,
+          hr:a.average_heartrate?Math.round(a.average_heartrate):null, elev:Math.round(a.total_elevation_gain||0)}; }
+      if(list.length<100) break; page++;
+    }
+    stravaSave({...stravaCfg(), last:Math.floor(Date.now()/1000)}); save();
+    if(manual||added) toast(added?`Synced ${added} new run${added>1?'s':''} from Strava`:'Strava is up to date');
+    renderAll();
+  }catch(e){ if(manual) toast(e.message||'Could not reach Strava'); }
+}
+async function stravaCallback(){
+  const q=new URLSearchParams(location.search); if(!q.has('code')&&!q.has('error')) return false;
+  history.replaceState(null,'',location.pathname);
+  if(q.get('error')){ toast('Strava connection was cancelled'); return true; }
+  try{ await stravaToken({grant_type:'authorization_code', code:q.get('code')}); toast('Strava connected ✓'); await stravaSync(true); }
+  catch(e){ toast(e.message); }
+  return true;
+}
+function pace(secs,km){ if(!km) return '–'; const p=secs/km; return Math.floor(p/60)+':'+String(Math.round(p%60)).padStart(2,'0'); }
+function runCard(){
+  const runs=Object.values(S.runs||{}).filter(r=>r.km>=1).sort((a,b)=>a.date<b.date?-1:1);
+  if(!runs.length) return `<div class="card"><h2>Running progress</h2><p class="muted" style="margin:0">${stravaTok()?'No runs synced yet. Go for a jog!':'Connect Strava in Settings to see your jogging progress here.'}</p></div>`;
+  const mon=mondayOf(today()); const weeks=[...Array(12)].map((_,i)=>addDays(mon,(i-11)*7));
+  const wkm=weeks.map(w=>({label:w.slice(8)+'/'+(+w.slice(5,7)), value:runs.filter(r=>r.date>=w&&r.date<addDays(w,7)).reduce((a,r)=>a+r.km,0), color:C('--accent')}));
+  const pts=runs.map(r=>({d:r.date, y:r.secs/r.km/60}));
+  const avg=pts.map((p,i)=>{ const w=pts.slice(Math.max(0,i-4),i+1); return {d:p.d, y:w.reduce((a,q)=>a+q.y,0)/w.length}; });
+  const first=runs.slice(0,4), last=runs.slice(-4); const pf=first.reduce((a,r)=>a+r.secs,0)/first.reduce((a,r)=>a+r.km,0), pl=last.reduce((a,r)=>a+r.secs,0)/last.reduce((a,r)=>a+r.km,0);
+  const hf=first.filter(r=>r.hr), hl=last.filter(r=>r.hr);
+  const hrF=hf.length?Math.round(hf.reduce((a,r)=>a+r.hr,0)/hf.length):null, hrL=hl.length?Math.round(hl.reduce((a,r)=>a+r.hr,0)/hl.length):null;
+  const diff=pf-pl; const total=runs.reduce((a,r)=>a+r.km,0), longest=Math.max(...runs.map(r=>r.km));
+  const mmss=v=>Math.floor(v)+':'+String(Math.round((v%1)*60)).padStart(2,'0');
+  return `<div class="card"><h2>Running progress</h2>
+    <div class="grid" style="margin-bottom:8px">
+      <div class="stat"><div class="v">${fmt1(total)} km</div><div class="l">${runs.length} runs synced</div></div>
+      <div class="stat"><div class="v">${fmt1(longest)} km</div><div class="l">Longest run</div></div>
+    </div>
+    ${runs.length>=8?`<p style="font-size:14px;margin:0 0 8px">Last 4 runs: <b>${pace(pl,1)}/km</b>${hrL?` at ${hrL} bpm`:''}, vs first 4: ${pace(pf,1)}/km${hrF?` at ${hrF} bpm`:''}.
+      ${diff>5?`<span class="good">${pace(diff,1)} faster per km.</span>`:diff<-5?'<span class="muted">Slower so far, which is normal early on or in heat.</span>':'<span class="muted">About the same so far.</span>'}</p>`:''}
+    <h2 style="margin-top:8px">Km per week</h2>${barChart(wkm,{fmt:v=>v.toFixed(0)})}
+    <h2 style="margin-top:12px">Pace per run (min/km, lower is faster)</h2>
+    ${lineChart([{points:pts,color:C('--muted'),line:false,dots:true},{points:avg,color:C('--accent'),width:2.5}],{yFmt:mmss})}
+    <p class="muted" style="font-size:12px;margin:6px 0 0">In zone 2, getting faster at the same heart rate is the sign your fitness is improving.</p>
+    <ul class="list">${runs.slice(-5).reverse().map(r=>`<li><span>${r.date.slice(5).replace('-','/')} · ${fmt1(r.km)} km</span><span class="muted">${pace(r.secs,r.km)}/km${r.hr?` · ${r.hr} bpm`:''}</span></li>`).join('')}</ul>
+  </div>`;
+}
+
 function importFromUrl(){
   const q=new URLSearchParams(location.search); if(!q.has('weight')&&!q.has('active')) return;
   const d=/^\d{4}-\d{2}-\d{2}$/.test(q.get('date')||'')?q.get('date'):today(); const x=day(d); const got=[];
@@ -551,6 +640,7 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   ({dash:renderDash,log:renderLog,plan:renderPlan,fast:renderFast,settings:renderSettings})[b.dataset.tab](); window.scrollTo(0,0);
 });
 importFromUrl(); renderAll();
+stravaCallback().then(handled=>{ if(!handled) stravaSync(false); });
 </script>
 </body>
 </html>
