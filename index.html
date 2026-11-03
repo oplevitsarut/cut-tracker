@@ -456,8 +456,9 @@ function importData(file){ if(!file) return; const r=new FileReader(); r.onload=
 function importFromUrl(){
   const q=new URLSearchParams(location.search); if(!q.has('weight')&&!q.has('active')) return;
   const d=/^\d{4}-\d{2}-\d{2}$/.test(q.get('date')||'')?q.get('date'):today(); const x=day(d); const got=[];
-  const w=parseFloat(q.get('weight')); if(w>20&&w<400){ x.weight=Math.round(w*10)/10; got.push('weight'); }
-  const a=parseFloat(q.get('active')); if(a>=0&&a<10000){ x.active=Math.round(a); got.push('active calories'); }
+  const num=k=>parseFloat(String(q.get(k)||'').replace(',','.').replace(/[^0-9.]/g,''));
+  const w=num('weight'); if(w>20&&w<400){ x.weight=Math.round(w*10)/10; got.push('weight'); }
+  const a=num('active'); if(a>=0&&a<10000){ x.active=Math.round(a); got.push('active calories'); }
   save(); history.replaceState(null,'',location.pathname); if(got.length) toast('Imported '+got.join(' and ')+' from Health');
 }
 
