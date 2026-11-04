@@ -234,7 +234,7 @@ function dnum(s){ return new Date(s+'T12:00:00').getTime()/864e5; }
 function load(){
   let s=null; try{ s=JSON.parse(localStorage.getItem(KEY)); }catch(e){}
   if(!s) s={};
-  s.settings = Object.assign({sex:'male', age:25, height:177, startWeight:113.5, goalWeight:83.5,
+  s.settings = Object.assign({sex:'male', age:25, z2lo:116, z2hi:145, height:177, startWeight:113.5, goalWeight:83.5,
     name:'', startDate:'2026-11-03', targetDate:'2027-05-03', activity:1.2, calorieTarget:'', proteinTarget:''}, s.settings||{});
   s.days = s.days||{}; s.plan = s.plan||DEFAULT_PLAN.map(p=>({...p})); s.plan.forEach((p,i)=>{ const d=DEFAULT_PLAN[i]; if(p.min===undefined && d && d.min && p.name===d.name && p.detail===d.detail){ p.min=d.min; if(d.long) p.long=true; } });
   s.runs = s.runs||{};
@@ -272,10 +272,20 @@ function exerciseKcal(d){ // Health active energy wins, otherwise logged workout
 }
 function burned(d){ return Math.round(tdee(weightOn(d)) + exerciseKcal(d)); }
 function deficit(d){ const x=S.days[d]; if(!x||!x.meals.length) return null; return burned(d)-eaten(d); }
-function runsOn(d){ return Object.values(S.runs||{}).filter(r=>r.date===d); }
+const KINDS={run:'Run',treadmill:'Treadmill walk',walk:'Walk',badminton:'Badminton',tennis:'Tennis',strength:'Strength',other:'Other'};
+function kindOf(a){ const t=a.sport_type||a.type||'';
+  if(t==='VirtualRun'||(a.trainer&&/Run|Walk|Hike/.test(t))) return 'treadmill';
+  if(/Run/.test(t)) return 'run'; if(/Walk|Hike/.test(t)) return 'walk';
+  if(/Badminton/.test(t)) return 'badminton'; if(/Tennis/.test(t)) return 'tennis';
+  if(/WeightTraining|Crossfit|Workout/.test(t)) return 'strength'; return 'other'; }
+const actKind = r => r.kind||'run';
+function actsOn(d){ return Object.values(S.runs||{}).filter(r=>r.date===d); }
+function runsOn(d){ return actsOn(d).filter(r=>actKind(r)==='run'); }
+function zone2Range(){ return [+S.settings.z2lo||116, +S.settings.z2hi||145]; }
+function inZone2(r){ const [lo,hi]=zone2Range(); return !r.hr || (r.hr>=lo && r.hr<=hi); }
+// Zone 2 minutes: outdoor runs and treadmill sessions whose average heart rate is in range, or zone 2 jogs logged by hand
 function z2Minutes(d){ const x=S.days[d]; const logged=x? x.workouts.filter(w=>w.type==='z2').reduce((a,w)=>a+(+w.minutes||0),0):0;
-  const strava=runsOn(d).reduce((a,r)=>a+r.secs/60,0); return Math.round(Math.max(logged,strava)); }
-function zone2Range(){ const max=220-age(); return [Math.round(max*.6), Math.round(max*.7)]; }
+  const strava=actsOn(d).filter(r=>['run','treadmill'].includes(actKind(r)) && inZone2(r)).reduce((a,r)=>a+r.secs/60,0); return Math.round(Math.max(logged,strava)); }
 function weightSeries(){ return sortedDates().filter(d=>S.days[d].weight).map(d=>({d, y:+S.days[d].weight})); }
 function trend(series){ // 7-day moving average by date
   return series.map(p=>{ const w=series.filter(q=>dnum(q.d)<=dnum(p.d) && dnum(q.d)>dnum(p.d)-7);
@@ -287,7 +297,7 @@ function weeklyRate(){ // kg per week from trend over last 28 days
   const days=dnum(last.d)-dnum(first.d); if(days<6) return null;
   return (first.y-last.y)/days*7;
 }
-function isDone(d){ const x=S.days[d]; return S.done[d]!==undefined ? !!S.done[d] : !!((x && x.workouts.some(w=>w.type!=='other')) || runsOn(d).length); }
+function isDone(d){ const x=S.days[d]; return S.done[d]!==undefined ? !!S.done[d] : !!((x && x.workouts.some(w=>w.type!=='other')) || actsOn(d).length); }
 function workoutStatus(d){
   const i=(new Date(d+'T12:00:00').getDay()+6)%7, p=S.plan[i];
   if(isDone(d)) return 'hit';
@@ -562,7 +572,7 @@ function renderLog(){ setTimeout(renderPhoto,0);
     <div class="ph"><h2>Workouts</h2><span class="meta">${z2Minutes(logDate)} min zone 2</span></div>
     ${x.workouts.length?`<ul class="rows">${x.workouts.map((w,i)=>`<li><div class="grow"><div class="t">${esc(w.label)}</div><div class="s">${w.minutes||0} min</div></div>
       <div class="fig num">${w.kcal?fmt0(w.kcal):'—'}<small>kcal</small></div><button class="x" aria-label="Delete workout" onclick="delItem('workouts',${i})">${IC.x}</button></li>`).join('')}</ul>`:''}
-    ${runsOn(logDate).length?`<ul class="rows">${runsOn(logDate).map(r=>`<li><div class="grow"><div class="t">${esc(r.name)}</div><div class="s">From Strava · ${pace(r.secs,r.km)} /km${r.hr?' · '+r.hr+' bpm':''}</div></div><div class="fig num">${fmt1(r.km)}<small>km</small></div></li>`).join('')}</ul>`:''}
+    ${actsOn(logDate).length?`<ul class="rows">${actsOn(logDate).map(r=>`<li><div class="grow"><div class="t">${esc(r.name)}</div><div class="s">${KINDS[actKind(r)]} from Strava${actKind(r)==='run'?' · '+pace(r.secs,r.km)+' /km':''}${r.hr?' · '+r.hr+' bpm':''}</div></div><div class="fig num">${actKind(r)==='run'?fmt1(r.km)+'<small>km</small>':Math.round(r.secs/60)+'<small>min</small>'}</div></li>`).join('')}</ul>`:''}
     <label for="wt">Add a workout</label>
     <select id="wt"><option value="z2">Zone 2 jog</option><option value="strength">Strength</option><option value="walk">Walk</option><option value="other">Other</option></select>
     <div class="inline">
@@ -628,12 +638,13 @@ function renderPlan(){
     <div class="ph"><h2>Zone 2 minutes</h2><span class="meta">per week · ${lo}–${hi} bpm</span></div>
     <div class="legend"><span>${barKey('var(--accent)')}This week</span><span>${barKey('var(--text)')}Past weeks</span><span>${lineKey('var(--text)',true,1)}Goal 150 min</span></div>
     ${barChart(z2,{ref:{value:150,label:'Goal 150'}, every:2})}
-    <p class="note">Zone 2 is 60 to 70% of your max heart rate (${220-age()}). If your Garmin has zones from a test, use those. Walk a minute when your heart rate drifts above ${hi}.</p>
+    <p class="note">Runs and treadmill sessions count when their average heart rate is ${lo}–${hi} bpm (change it in Settings). Strength, badminton and tennis don’t count here.</p>
   </div>
-  ${runCard()}`;
+  ${runCard()}
+  ${otherCard()}`;
 }
 function runCard(){
-  const runs=Object.values(S.runs||{}).filter(r=>r.km>=1).sort((a,b)=>a.date<b.date?-1:1);
+  const runs=Object.values(S.runs||{}).filter(r=>actKind(r)==='run' && r.km>=1).sort((a,b)=>a.date<b.date?-1:1);
   if(!runs.length) return `<div class="panel"><div class="ph"><h2>Running</h2><span class="meta">from Strava</span></div><div class="empty">${stravaTok()?'No runs synced yet. They appear here after your next jog.':'Connect Strava in Settings to see your jogging progress here.'}</div></div>`;
   const mon=mondayOf(today()); const weeks=[...Array(12)].map((_,i)=>addDays(mon,(i-11)*7));
   const wkm=weeks.map((w,i)=>{ const v=Math.round(runs.filter(r=>r.date>=w&&r.date<addDays(w,7)).reduce((a,r)=>a+r.km,0)*10)/10; return {label:dlabel(w), value:v, color:i===11?'var(--accent)':'var(--text)', tip:'Week of '+dlabel(w)+'  '+fmt1(v)+' km'}; });
@@ -657,7 +668,18 @@ function runCard(){
     <div class="legend"><span>${lineKey('var(--accent)')}5-run average</span><span>${lineKey('var(--muted)',false,1)}Each run</span></div>
     ${lineChart([{points:pts,color:'var(--muted)',width:1,tip:true},{points:avg,color:'var(--accent)',width:2,end:true}],{yFmt:mmss, tipFmt:v=>mmss(v)+' /km'})}
     <p class="note">In zone 2, running faster at the same heart rate is the sign your fitness is improving.</p>
-    <ul class="rows">${runs.slice(-5).reverse().map(r=>`<li><div class="grow"><div class="t">${dlabel(r.date)}</div><div class="s">${pace(r.secs,r.km)} /km${r.hr?` · ${r.hr} bpm`:''}</div></div><div class="fig num">${fmt1(r.km)}<small>km</small></div></li>`).join('')}</ul>
+    <ul class="rows">${runs.slice(-5).reverse().map(r=>`<li><div class="grow"><div class="t">${dlabel(r.date)}</div><div class="s ${inZone2(r)?'':'neg'}">${pace(r.secs,r.km)} /km${r.hr?` · ${r.hr} bpm`:''}${inZone2(r)?'':' · above zone 2'}</div></div><div class="fig num">${fmt1(r.km)}<small>km</small></div></li>`).join('')}</ul>
+  </div>`;
+}
+function otherCard(){
+  const acts=Object.values(S.runs||{}).filter(r=>actKind(r)!=='run').sort((a,b)=>a.date<b.date?1:-1);
+  if(!acts.length) return `<div class="panel"><div class="ph"><h2>Other activities</h2><span class="meta">from Strava</span></div><div class="empty">Treadmill walks, badminton and tennis from Strava show here.</div></div>`;
+  const mon=mondayOf(today()), wk=acts.filter(r=>r.date>=mon), mins=f=>Math.round(wk.filter(f).reduce((a,r)=>a+r.secs/60,0));
+  const cells=[['Treadmill',r=>actKind(r)==='treadmill'],['Badminton',r=>actKind(r)==='badminton'],['Tennis',r=>actKind(r)==='tennis'],['Other',r=>!['treadmill','badminton','tennis'].includes(actKind(r))]];
+  return `<div class="panel"><div class="ph"><h2>Other activities</h2><span class="meta">this week, minutes</span></div>
+    <div class="strip four" style="--n:4">${cells.map(([l,f])=>`<div><div class="l">${l}</div><div class="v num">${mins(f)}<small> min</small></div></div>`).join('')}</div>
+    <ul class="rows">${acts.slice(0,5).map(r=>{ const k=actKind(r), z=k==='treadmill'&&r.hr&&inZone2(r);
+      return `<li><div class="grow"><div class="t">${KINDS[k]}</div><div class="s">${dlabel(r.date)}${r.hr?` · ${r.hr} bpm`:''}${z?' · counts as zone 2':''}</div></div><div class="fig num">${Math.round(r.secs/60)}<small>min</small></div></li>`; }).join('')}</ul>
   </div>`;
 }
 
@@ -706,6 +728,7 @@ function renderSettings(){
       ${f('name','First name','text','autocomplete="given-name" placeholder="For the greeting"')}
       <div class="fields"><div><label for="s-sex">Sex</label><select id="s-sex"><option value="male" ${st.sex==='male'?'selected':''}>Male</option><option value="female" ${st.sex==='female'?'selected':''}>Female</option></select></div>
         <div>${f('age','Age','number','inputmode="numeric" placeholder="25"')}</div></div>
+      <div class="fields"><div>${f('z2lo','Zone 2 from, bpm','number','inputmode="numeric"')}</div><div>${f('z2hi','Zone 2 to, bpm','number','inputmode="numeric"')}</div></div>
       <div class="fields"><div>${f('height','Height, cm','number')}</div>
         <div><label for="s-activity">Day job</label><select id="s-activity">
         ${[[1.2,'Desk job'],[1.375,'On your feet some'],[1.55,'Active job']].map(([v,l])=>`<option value="${v}" ${+st.activity===v?'selected':''}>${l}</option>`).join('')}
@@ -730,9 +753,9 @@ function renderSettings(){
     </div>
   </div>
   <div class="set">
-    <h2>Strava</h2><p>Runs come in by themselves each time you open the app.</p>
+    <h2>Strava</h2><p>Runs, treadmill walks, badminton and tennis come in by themselves each time you open the app.</p>
     <div class="panel">
-    ${stravaTok()? `<div class="ph"><h2 style="font-weight:500">Connected</h2><span class="pill ok">${Object.keys(S.runs).length} runs synced</span></div>
+    ${stravaTok()? `<div class="ph"><h2 style="font-weight:500">Connected</h2><span class="pill ok">${Object.keys(S.runs).length} activities synced</span></div>
       <div class="actions"><button onclick="stravaSync(true)">Sync now</button><button class="danger" onclick="stravaDisconnect()">Disconnect</button></div>`
     : `<div class="fields"><div><label for="sid">Client ID</label><input id="sid" inputmode="numeric" value="${esc(stravaCfg().id||'')}"></div>
       <div><label for="ssec">Client secret</label><input id="ssec" type="password" autocomplete="off" value="${esc(stravaCfg().secret||'')}"></div></div>
@@ -742,7 +765,7 @@ function renderSettings(){
   <div class="set">
     <h2>Backup</h2><p>Your data lives only on this phone. Export now and then, and save the file to Files or iCloud Drive.</p>
     <div class="panel">
-      <div class="ph"><h2 style="font-weight:500">${sortedDates().length} days logged</h2><span class="meta">${S.fasts.length} fasts · ${Object.keys(S.runs).length} runs</span></div>
+      <div class="ph"><h2 style="font-weight:500">${sortedDates().length} days logged</h2><span class="meta">${S.fasts.length} fasts · ${Object.keys(S.runs).length} activities</span></div>
       <div class="actions"><button onclick="exportData()">Export</button><button onclick="$('#imp').click()">Import</button></div>
       <input type="file" id="imp" accept="application/json" class="hidden" onchange="importData(this.files[0])">
     </div>
@@ -874,18 +897,18 @@ async function stravaSync(manual){
   if(!stravaTok()) return;
   try{
     const tok=await stravaAccess(); const c=stravaCfg();
-    const after=c.last? c.last-3*86400 : Math.floor(Date.now()/1000)-120*86400; let page=1, added=0;
+    const after=c.last&&c.v2? c.last-3*86400 : Math.floor(Date.now()/1000)-120*86400; let page=1, added=0;
     while(page<=5){
       const r=await fetch(`https://www.strava.com/api/v3/athlete/activities?after=${after}&per_page=100&page=${page}`,{headers:{authorization:'Bearer '+tok}});
       if(!r.ok) throw new Error('Strava error '+r.status); const list=await r.json(); if(!list.length) break;
-      for(const a of list){ if(!/Run/.test(a.sport_type||a.type)) continue;
+      for(const a of list){
         if(!S.runs[a.id]) added++;
-        S.runs[a.id]={date:(a.start_date_local||'').slice(0,10), name:a.name, km:Math.round(a.distance/10)/100, secs:a.moving_time,
+        S.runs[a.id]={date:(a.start_date_local||'').slice(0,10), name:a.name, kind:kindOf(a), km:Math.round(a.distance/10)/100, secs:a.moving_time,
           hr:a.average_heartrate?Math.round(a.average_heartrate):null, elev:Math.round(a.total_elevation_gain||0)}; }
       if(list.length<100) break; page++;
     }
-    stravaSave({...stravaCfg(), last:Math.floor(Date.now()/1000)}); save();
-    if(manual||added) toast(added?`Synced ${added} new run${added>1?'s':''} from Strava`:'Strava is up to date');
+    stravaSave({...stravaCfg(), last:Math.floor(Date.now()/1000), v2:1}); save();
+    if(manual||added) toast(added?`Synced ${added} new activit${added>1?'ies':'y'} from Strava`:'Strava is up to date');
     renderAll();
   }catch(e){ if(manual) toast(e.message||'Could not reach Strava'); }
 }
