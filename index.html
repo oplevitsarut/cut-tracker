@@ -237,7 +237,7 @@ function dnum(s){ return new Date(s+'T12:00:00').getTime()/864e5; }
 function load(){
   let s=null; try{ s=JSON.parse(localStorage.getItem(KEY)); }catch(e){}
   if(!s) s={};
-  s.settings = Object.assign({sex:'male', age:25, z2lo:116, z2hi:145, height:177, startWeight:113.5, goalWeight:83.5,
+  s.settings = Object.assign({sex:'male', age:25, z2lo:116, z2hi:145, paceGoal:'10:00', paceGoalDate:'2026-12-31', height:177, startWeight:113.5, goalWeight:83.5,
     name:'', startDate:'2026-11-03', targetDate:'2027-05-03', activity:1.2, calorieTarget:'', proteinTarget:''}, s.settings||{});
   s.days = s.days||{}; s.plan = s.plan||DEFAULT_PLAN.map(p=>({...p})); s.plan.forEach((p,i)=>{ const d=DEFAULT_PLAN[i]; if(p.min===undefined && d && d.min && p.name===d.name && p.detail===d.detail){ p.min=d.min; if(d.long) p.long=true; } });
   s.runs = s.runs||{};
@@ -275,6 +275,12 @@ function exerciseKcal(d){ // Health active energy wins, otherwise logged workout
 }
 function burned(d){ return Math.round(tdee(weightOn(d)) + exerciseKcal(d)); }
 function deficit(d){ const x=S.days[d]; if(!x||!x.meals.length) return null; return burned(d)-eaten(d); }
+// Pace goal, in minutes per km ("10:00" -> 10)
+function paceGoal(){ const m=String(S.settings.paceGoal||'10:00').trim().match(/^(\d+)(?:[:.](\d{1,2}))?$/); return m? +m[1]+(+(m[2]||0))/60 : 10; }
+// Straight-line trend of zone 2 run pace over the last 6 weeks: minutes per km change per day
+function paceTrend(runs){ const t=dnum(today()); const r=runs.filter(x=>dnum(x.date)>t-42); if(r.length<4) return null;
+  const xs=r.map(x=>dnum(x.date)), ys=r.map(x=>x.secs/x.km/60), mx=xs.reduce((a,b)=>a+b)/xs.length, my=ys.reduce((a,b)=>a+b)/ys.length;
+  const sxx=xs.reduce((a,x)=>a+(x-mx)**2,0); if(!sxx) return null; const slope=xs.reduce((a,x,i)=>a+(x-mx)*(ys[i]-my),0)/sxx; return {slope, at:d=>my+slope*(dnum(d)-mx)}; }
 const KINDS={run:'Run',treadmill:'Treadmill walk',walk:'Walk',badminton:'Badminton',tennis:'Tennis',strength:'Strength',other:'Other'};
 function kindOf(a){ const t=a.sport_type||a.type||'';
   if(t==='VirtualRun'||(a.trainer&&/Run|Walk|Hike/.test(t))) return 'treadmill';
@@ -673,13 +679,19 @@ function runCard(){
   if(!runs.length) return `<div class="panel"><div class="ph"><h2>Running</h2><span class="meta">from Strava</span></div><div class="empty">${stravaTok()?'No runs synced yet. They appear here after your next jog.':'Connect Strava in Settings to see your jogging progress here.'}</div></div>`;
   const mon=mondayOf(today()); const weeks=[...Array(12)].map((_,i)=>addDays(mon,(i-11)*7));
   const wkm=weeks.map((w,i)=>{ const v=Math.round(runs.filter(r=>r.date>=w&&r.date<addDays(w,7)).reduce((a,r)=>a+r.km,0)*10)/10; return {label:dlabel(w), value:v, color:i===11?'var(--accent)':'var(--text)', tip:'Week of '+dlabel(w)+'  '+fmt1(v)+' km'}; });
-  const pts=runs.map(r=>({d:r.date, y:r.secs/r.km/60}));
+  const zr=runs.filter(inZone2).length>=3? runs.filter(inZone2) : runs; // pace progress on zone 2 runs, so a hard run can't fake it
+  const pts=zr.map(r=>({d:r.date, y:r.secs/r.km/60}));
   const avg=pts.map((p,i)=>{ const w=pts.slice(Math.max(0,i-4),i+1); return {d:p.d, y:w.reduce((a,q)=>a+q.y,0)/w.length}; });
   const first=runs.slice(0,4), last=runs.slice(-4); const pf=first.reduce((a,r)=>a+r.secs,0)/first.reduce((a,r)=>a+r.km,0), pl=last.reduce((a,r)=>a+r.secs,0)/last.reduce((a,r)=>a+r.km,0);
   const hf=first.filter(r=>r.hr), hl=last.filter(r=>r.hr);
   const hrF=hf.length?Math.round(hf.reduce((a,r)=>a+r.hr,0)/hf.length):null, hrL=hl.length?Math.round(hl.reduce((a,r)=>a+r.hr,0)/hl.length):null;
   const diff=pf-pl, total=runs.reduce((a,r)=>a+r.km,0), longest=Math.max(...runs.map(r=>r.km));
-  const mmss=v=>Math.floor(v)+':'+String(Math.round((v%1)*60)).padStart(2,'0');
+  const mmss=v=>{ const s=Math.round(v*60); return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); };
+  const goal=paceGoal(), gd=S.settings.paceGoalDate||'2026-12-31', now=avg[avg.length-1].y, gap=now-goal, tr=paceTrend(zr);
+  const weeksLeft=Math.max(0,(dnum(gd)-dnum(today()))/7), need=weeksLeft>0? gap*60/weeksLeft : null;
+  let eta=''; if(gap>0 && tr && tr.slope<0){ const days=(goal-tr.at(today()))/tr.slope; const d=addDays(today(),Math.max(0,Math.round(days))); eta = d<=gd? `At your current trend you get there around <b>${dlabel(d)}</b>, ahead of the deadline.` : `At your current trend you get there around <b>${dlabel(d)}</b>, after the deadline. Keep the easy runs coming; most of the gain comes from more zone 2 minutes, not faster runs.`; }
+  else if(gap>0) eta='Your pace isn’t improving yet. That’s normal in the first weeks; it usually starts dropping after 4 to 6 weeks of steady zone 2.';
+  const lastD=pts[pts.length-1].d, path=gap>0 && gd>lastD? [{d:lastD,y:now},{d:gd,y:goal}] : [];
   return `<div class="panel"><div class="ph"><h2>Running</h2><span class="meta">from Strava</span></div>
     <div class="strip" style="--n:3">
       <div><div class="l">Total</div><div class="v num">${fmt1(total)}<small> km</small></div></div>
@@ -687,12 +699,17 @@ function runCard(){
       <div><div class="l">Longest</div><div class="v num">${fmt1(longest)}<small> km</small></div></div>
     </div>
     ${runs.length>=8?`<p class="note">Last 4 runs <b>${pace(pl,1)} /km</b>${hrL?` at ${hrL} bpm`:''}, against ${pace(pf,1)} /km${hrF?` at ${hrF} bpm`:''} for your first 4. ${diff>5?`<b class="pos">${pace(diff,1)} faster per km.</b>`:diff<-5?'Slower so far, which is normal early on or in heat.':'About the same so far.'}</p>`:''}
+    <div class="ph" style="margin-top:18px"><h2 style="font-weight:500">Pace goal</h2><span class="meta">under ${mmss(goal)} /km by ${dlabel(gd)}</span></div>
+    <div class="lead"><span class="fig num">${mmss(now)}</span><span class="unit">/km now${gap>0?` · ${mmss(gap)} to go`:''}</span>${gap<=0?'<span class="pill ok">Goal reached</span>':''}</div>
+    ${gap>0&&need!=null?`<p class="note">That’s about <b>${Math.ceil(need)} seconds per km faster each week</b> for the next ${Math.round(weeksLeft)} weeks. ${eta}</p>`:gap<=0?'<p class="note">Set a new goal in Settings.</p>':''}
+    <div class="legend"><span>${lineKey('var(--accent)')}5-run average</span><span>${lineKey('var(--muted)',false,1)}Each zone 2 run</span><span>${lineKey('var(--text)',true,1)}Goal</span>${path.length?`<span>${lineKey('var(--accent)',true,1)}Path to goal</span>`:''}</div>
+    ${lineChart([{points:[{d:pts[0].d,y:goal},{d:gd>lastD?gd:lastD,y:goal}],color:'var(--text)',width:1,dash:true},
+      ...(path.length?[{points:path,color:'var(--accent)',width:1.5,dash:true}]:[]),
+      {points:pts,color:'var(--muted)',width:1,tip:true},{points:avg,color:'var(--accent)',width:2,end:true}],
+      {yFmt:mmss, tipFmt:v=>mmss(v)+' /km', xTo:gd>lastD?addDays(gd,3):undefined})}
+    <p class="note">Pace is measured on runs in your zone 2 range, so lower here means fitter at the same effort.</p>
     <div class="ph" style="margin-top:18px"><h2 style="font-weight:500">Km per week</h2><span class="meta">12 weeks</span></div>
     ${barChart(wkm,{fmt:v=>fmt0(v), every:3})}
-    <div class="ph" style="margin-top:18px"><h2 style="font-weight:500">Pace per run</h2><span class="meta">min/km, lower is faster</span></div>
-    <div class="legend"><span>${lineKey('var(--accent)')}5-run average</span><span>${lineKey('var(--muted)',false,1)}Each run</span></div>
-    ${lineChart([{points:pts,color:'var(--muted)',width:1,tip:true},{points:avg,color:'var(--accent)',width:2,end:true}],{yFmt:mmss, tipFmt:v=>mmss(v)+' /km'})}
-    <p class="note">In zone 2, running faster at the same heart rate is the sign your fitness is improving.</p>
     <ul class="rows">${runs.slice(-5).reverse().map(r=>`<li><div class="grow"><div class="t">${dlabel(r.date)}</div><div class="s ${inZone2(r)?'':'neg'}">${pace(r.secs,r.km)} /km${r.hr?` · ${r.hr} bpm`:''}${inZone2(r)?'':' · above zone 2'}</div></div><div class="fig num">${fmt1(r.km)}<small>km</small></div></li>`).join('')}</ul>
   </div>`;
 }
@@ -775,6 +792,13 @@ function renderSettings(){
       <label for="apikey">API key ${apiKey()?'<span class="pill ok" style="margin-left:6px">Saved</span>':''}</label>
       <input id="apikey" type="password" autocomplete="off" placeholder="sk-ant-..." value="${esc(apiKey())}">
       <div class="actions"><button onclick="try{localStorage.setItem(KEY_STORE,$('#apikey').value.trim());toast('Key saved');renderSettings()}catch(e){toast('Could not save')}">Save key</button></div>
+    </div>
+  </div>
+  <div class="set">
+    <h2>Running goal</h2><p>The pace you want your zone 2 runs to get under, and by when.</p>
+    <div class="panel">
+      <div class="fields"><div>${f('paceGoal','Pace, min:sec per km','text','inputmode="decimal" placeholder="10:00"')}</div><div>${f('paceGoalDate','By','date')}</div></div>
+      <div class="actions"><button class="primary" onclick="saveSettings()">Save goal</button></div>
     </div>
   </div>
   <div class="set">
