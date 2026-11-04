@@ -671,43 +671,49 @@ function renderPlan(){
     ${barChart(z2,{ref:{value:150,label:'Goal 150'}, every:2})}
     <p class="note">Runs and treadmill sessions count when their average heart rate is ${lo}–${hi} bpm (change it in Settings). Strength, badminton and tennis don’t count here.</p>
   </div>
+  ${paceCard()}
   ${runCard()}
   ${otherCard()}`;
 }
+const mmss=v=>{ const s=Math.round(v*60); return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); };
+function allRuns(){ return Object.values(S.runs||{}).filter(r=>actKind(r)==='run' && r.km>=1).sort((a,b)=>a.date<b.date?-1:1); }
+// Pace goal: zone 2 runs only, so a hard run can't fake progress
+function paceCard(){
+  const runs=allRuns(); if(!runs.length) return '';
+  const zr=runs.filter(inZone2).length>=3? runs.filter(inZone2) : runs;
+  const pts=zr.map(r=>({d:r.date, y:r.secs/r.km/60}));
+  const avg=pts.map((p,i)=>{ const w=pts.slice(Math.max(0,i-4),i+1); return {d:p.d, y:w.reduce((a,q)=>a+q.y,0)/w.length}; });
+  const goal=paceGoal(), gd=S.settings.paceGoalDate||'2026-12-31', start=avg[0].y, now=avg[avg.length-1].y, gap=now-goal, tr=paceTrend(zr);
+  const weeksLeft=Math.max(0,(dnum(gd)-dnum(today()))/7), need=weeksLeft>0&&gap>0? Math.ceil(gap*60/weeksLeft) : null;
+  const prog= start>goal? Math.max(0,Math.min(100,(start-now)/(start-goal)*100)) : 100;
+  let line;
+  if(gap<=0) line='Goal reached. Set a new one in Settings.';
+  else { let eta='Not getting faster yet, which is normal in the first 4 to 6 weeks.';
+    if(tr && tr.slope<0){ const d=addDays(today(),Math.max(0,Math.round((goal-tr.at(today()))/tr.slope))); eta=`On your current trend: <b>${dlabel(d)}</b>${d>gd?', a bit late':''}.`; }
+    line=`Needs about <b>${need??'—'} s/km faster a week</b>. ${eta}`; }
+  const lastD=pts[pts.length-1].d, end=gd>lastD?gd:lastD;
+  return `<div class="panel"><div class="ph"><h2>Pace goal</h2><span class="meta">by ${dlabel(gd)}</span></div>
+    <div class="lead"><span class="fig num">${mmss(now)}</span><span class="unit">/km now · goal under ${mmss(goal)}</span></div>
+    <div class="track"><i style="width:${prog}%"></i></div>
+    <div class="ends"><span>${mmss(start)} start</span><span>${mmss(goal)} goal</span></div>
+    <p class="note">${line}</p>
+    ${lineChart([{points:[{d:pts[0].d,y:goal},{d:end,y:goal}],color:'var(--muted)',width:1,dash:true,label:'Goal'},
+      {points:avg,color:'var(--accent)',width:2,end:true,tip:true}],
+      {yFmt:mmss, tipFmt:v=>mmss(v)+' /km (5-run average)', xTo:addDays(end,2), H:150})}
+  </div>`;
+}
 function runCard(){
-  const runs=Object.values(S.runs||{}).filter(r=>actKind(r)==='run' && r.km>=1).sort((a,b)=>a.date<b.date?-1:1);
+  const runs=allRuns();
   if(!runs.length) return `<div class="panel"><div class="ph"><h2>Running</h2><span class="meta">from Strava</span></div><div class="empty">${stravaTok()?'No runs synced yet. They appear here after your next jog.':'Connect Strava in Settings to see your jogging progress here.'}</div></div>`;
   const mon=mondayOf(today()); const weeks=[...Array(12)].map((_,i)=>addDays(mon,(i-11)*7));
   const wkm=weeks.map((w,i)=>{ const v=Math.round(runs.filter(r=>r.date>=w&&r.date<addDays(w,7)).reduce((a,r)=>a+r.km,0)*10)/10; return {label:dlabel(w), value:v, color:i===11?'var(--accent)':'var(--text)', tip:'Week of '+dlabel(w)+'  '+fmt1(v)+' km'}; });
-  const zr=runs.filter(inZone2).length>=3? runs.filter(inZone2) : runs; // pace progress on zone 2 runs, so a hard run can't fake it
-  const pts=zr.map(r=>({d:r.date, y:r.secs/r.km/60}));
-  const avg=pts.map((p,i)=>{ const w=pts.slice(Math.max(0,i-4),i+1); return {d:p.d, y:w.reduce((a,q)=>a+q.y,0)/w.length}; });
-  const first=runs.slice(0,4), last=runs.slice(-4); const pf=first.reduce((a,r)=>a+r.secs,0)/first.reduce((a,r)=>a+r.km,0), pl=last.reduce((a,r)=>a+r.secs,0)/last.reduce((a,r)=>a+r.km,0);
-  const hf=first.filter(r=>r.hr), hl=last.filter(r=>r.hr);
-  const hrF=hf.length?Math.round(hf.reduce((a,r)=>a+r.hr,0)/hf.length):null, hrL=hl.length?Math.round(hl.reduce((a,r)=>a+r.hr,0)/hl.length):null;
-  const diff=pf-pl, total=runs.reduce((a,r)=>a+r.km,0), longest=Math.max(...runs.map(r=>r.km));
-  const mmss=v=>{ const s=Math.round(v*60); return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); };
-  const goal=paceGoal(), gd=S.settings.paceGoalDate||'2026-12-31', now=avg[avg.length-1].y, gap=now-goal, tr=paceTrend(zr);
-  const weeksLeft=Math.max(0,(dnum(gd)-dnum(today()))/7), need=weeksLeft>0? gap*60/weeksLeft : null;
-  let eta=''; if(gap>0 && tr && tr.slope<0){ const days=(goal-tr.at(today()))/tr.slope; const d=addDays(today(),Math.max(0,Math.round(days))); eta = d<=gd? `At your current trend you get there around <b>${dlabel(d)}</b>, ahead of the deadline.` : `At your current trend you get there around <b>${dlabel(d)}</b>, after the deadline. Keep the easy runs coming; most of the gain comes from more zone 2 minutes, not faster runs.`; }
-  else if(gap>0) eta='Your pace isn’t improving yet. That’s normal in the first weeks; it usually starts dropping after 4 to 6 weeks of steady zone 2.';
-  const lastD=pts[pts.length-1].d, path=gap>0 && gd>lastD? [{d:lastD,y:now},{d:gd,y:goal}] : [];
+  const total=runs.reduce((a,r)=>a+r.km,0), longest=Math.max(...runs.map(r=>r.km));
   return `<div class="panel"><div class="ph"><h2>Running</h2><span class="meta">from Strava</span></div>
     <div class="strip" style="--n:3">
       <div><div class="l">Total</div><div class="v num">${fmt1(total)}<small> km</small></div></div>
       <div><div class="l">Runs</div><div class="v num">${runs.length}</div></div>
       <div><div class="l">Longest</div><div class="v num">${fmt1(longest)}<small> km</small></div></div>
     </div>
-    ${runs.length>=8?`<p class="note">Last 4 runs <b>${pace(pl,1)} /km</b>${hrL?` at ${hrL} bpm`:''}, against ${pace(pf,1)} /km${hrF?` at ${hrF} bpm`:''} for your first 4. ${diff>5?`<b class="pos">${pace(diff,1)} faster per km.</b>`:diff<-5?'Slower so far, which is normal early on or in heat.':'About the same so far.'}</p>`:''}
-    <div class="ph" style="margin-top:18px"><h2 style="font-weight:500">Pace goal</h2><span class="meta">under ${mmss(goal)} /km by ${dlabel(gd)}</span></div>
-    <div class="lead"><span class="fig num">${mmss(now)}</span><span class="unit">/km now${gap>0?` · ${mmss(gap)} to go`:''}</span>${gap<=0?'<span class="pill ok">Goal reached</span>':''}</div>
-    ${gap>0&&need!=null?`<p class="note">That’s about <b>${Math.ceil(need)} seconds per km faster each week</b> for the next ${Math.round(weeksLeft)} weeks. ${eta}</p>`:gap<=0?'<p class="note">Set a new goal in Settings.</p>':''}
-    <div class="legend"><span>${lineKey('var(--accent)')}5-run average</span><span>${lineKey('var(--muted)',false,1)}Each zone 2 run</span><span>${lineKey('var(--text)',true,1)}Goal</span>${path.length?`<span>${lineKey('var(--accent)',true,1)}Path to goal</span>`:''}</div>
-    ${lineChart([{points:[{d:pts[0].d,y:goal},{d:gd>lastD?gd:lastD,y:goal}],color:'var(--text)',width:1,dash:true},
-      ...(path.length?[{points:path,color:'var(--accent)',width:1.5,dash:true}]:[]),
-      {points:pts,color:'var(--muted)',width:1,tip:true},{points:avg,color:'var(--accent)',width:2,end:true}],
-      {yFmt:mmss, tipFmt:v=>mmss(v)+' /km', xTo:gd>lastD?addDays(gd,3):undefined})}
-    <p class="note">Pace is measured on runs in your zone 2 range, so lower here means fitter at the same effort.</p>
     <div class="ph" style="margin-top:18px"><h2 style="font-weight:500">Km per week</h2><span class="meta">12 weeks</span></div>
     ${barChart(wkm,{fmt:v=>fmt0(v), every:3})}
     <ul class="rows">${runs.slice(-5).reverse().map(r=>`<li><div class="grow"><div class="t">${dlabel(r.date)}</div><div class="s ${inZone2(r)?'':'neg'}">${pace(r.secs,r.km)} /km${r.hr?` · ${r.hr} bpm`:''}${inZone2(r)?'':' · above zone 2'}</div></div><div class="fig num">${fmt1(r.km)}<small>km</small></div></li>`).join('')}</ul>
