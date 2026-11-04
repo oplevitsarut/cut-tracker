@@ -159,6 +159,9 @@ button svg{width:18px;height:18px;flex:none}
 .cal .h{color:var(--muted);font-size:12px;padding:4px 0}
 .cal .c{aspect-ratio:1;max-height:44px;display:flex;align-items:center;justify-content:center;border-radius:50%;margin:0 auto;width:100%;max-width:44px}
 .cal .hit{background:var(--accent);color:var(--ground)}
+.cal .c svg{width:62%;height:62%;max-width:24px;max-height:24px}
+.legend .ak{display:inline-flex;width:20px;height:20px;border-radius:50%;background:var(--accent);color:var(--ground);align-items:center;justify-content:center}
+.legend .ak svg{width:14px;height:14px}
 .cal .miss{background:var(--neg-tint);color:var(--neg-ink)}
 .cal .rest{color:var(--muted)}
 .cal .now{box-shadow:inset 0 0 0 1.5px var(--text)}
@@ -419,16 +422,38 @@ function brand(){ const wk=weekNo(today()), of=Math.max(1,Math.round((dnum(S.set
   return `<div class="brand">${IC.mark}Cut Tracker<span class="scope">Week ${wk} of ${of}</span></div>`; }
 
 // Calendar of hits and misses
+// Activity icons for done days on the workout calendar
+const AICON={
+  run:'<path d="M3 16h5l2-1.6 3 2.6h8v-1.3c0-1.1-.8-2-1.9-2.3l-4.1-1-2.3-3.6-2.2.7.6 2.3L8.7 13 6.4 8.4H3.6z"/><path d="M3 19.5h18"/>',
+  treadmill:'<path d="M3 19.5h18M3 19.5 21 11"/><path d="M14 7.5h4v4"/><path d="M18 7.5 13 12.5"/>',
+  strength:'<path d="M7 7v10M17 7v10M4 9.5v5M20 9.5v5M7 12h10"/>',
+  badminton:'<path d="M10 17.5h4v1.5a2 2 0 0 1-4 0z"/><path d="M10 17.5 7 5M14 17.5 17 5M12 17.5V4.5M7 5c3.2-1.2 6.8-1.2 10 0"/>',
+  tennis:'<circle cx="12" cy="12" r="8.5"/><path d="M6 6c3.2 3.4 3.2 8.6 0 12M18 6c-3.2 3.4-3.2 8.6 0 12"/>',
+  walk:'<ellipse cx="8.5" cy="8" rx="2.3" ry="3.5"/><path d="M7.4 13.5h2.3"/><ellipse cx="15.5" cy="12.5" rx="2.3" ry="3.5"/><path d="M14.4 18h2.3"/>',
+  done:'<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+};
+const ALABEL={run:'Run',treadmill:'Treadmill walk',strength:'Strength',badminton:'Badminton',tennis:'Tennis',walk:'Walk',done:'Workout done'};
+const aicon=k=>`<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${AICON[k]}</svg>`;
+// What was done on a day, most important first: run, treadmill, strength, badminton, tennis, walk
+function dayKinds(d){ const x=S.days[d], k=new Set();
+  for(const r of actsOn(d)){ const a=actKind(r); k.add(a==='other'?'done':a); }
+  if(x) for(const w of x.workouts){ k.add(w.type==='z2'?'run':w.type==='strength'?'strength':w.type==='walk'?'walk':'done'); }
+  const order=['run','treadmill','strength','badminton','tennis','walk','done'], list=order.filter(o=>k.has(o));
+  if(!list.length && isDone(d)){ const p=S.plan[(new Date(d+'T12:00:00').getDay()+6)%7]; list.push(p.type==='z2'?'run':p.type==='strength'?'strength':'done'); }
+  return list; }
 function calendar(key, fn){
   const m=calMonth[key], first=m+'-01', start=mondayOf(first);
   const label=new Date(first+'T12:00:00').toLocaleDateString(undefined,{month:'long',year:'numeric'});
-  let cells=['M','T','W','T','F','S','S'].map(h=>`<div class="h">${h}</div>`).join(''), hits=0, miss=0;
+  let cells=['M','T','W','T','F','S','S'].map(h=>`<div class="h">${h}</div>`).join(''), hits=0, miss=0, seen=new Set();
   for(let i=0;i<42;i++){ const d=addDays(start,i); if(i>=35 && d.slice(0,7)!==m) break;
     if(d.slice(0,7)!==m){ cells+='<div></div>'; continue; } const st=fn(d); if(st==='hit') hits++; if(st==='miss') miss++;
-    cells+=`<div class="c ${st} ${d===today()?'now':''} ${d>today()?'fut':''}">${+d.slice(8)}</div>`; }
+    const ks= key==='plan'&&st==='hit'? dayKinds(d):[]; ks.forEach(k=>seen.add(k));
+    cells+= ks.length? `<div class="c hit ${d===today()?'now':''}"${tipAttr(dlabel(d)+'  '+ks.map(k=>ALABEL[k]).join(', '))}>${aicon(ks[0])}</div>`
+      : `<div class="c ${st} ${d===today()?'now':''} ${d>today()?'fut':''}">${+d.slice(8)}</div>`; }
   return `<div class="calhead"><button class="round" aria-label="Previous month" onclick="shiftCal('${key}',-1)">${IC.left}</button><b>${label}</b><button class="round" aria-label="Next month" onclick="shiftCal('${key}',1)">${IC.right}</button></div>
   <div class="cal">${cells}</div>
-  <div class="legend"><span><i class="swatch" style="background:var(--accent)"></i>Done ${hits}</span><span><i class="swatch" style="background:var(--neg-tint)"></i>Missed ${miss}</span><span><i class="swatch" style="box-shadow:inset 0 0 0 1.5px var(--text)"></i>Today</span></div>`;
+  <div class="legend"><span><i class="swatch" style="background:var(--accent)"></i>Done ${hits}</span><span><i class="swatch" style="background:var(--neg-tint)"></i>Missed ${miss}</span><span><i class="swatch" style="box-shadow:inset 0 0 0 1.5px var(--text)"></i>Today</span></div>
+  ${seen.size?`<div class="legend">${[...seen].sort((a,b)=>Object.keys(AICON).indexOf(a)-Object.keys(AICON).indexOf(b)).map(k=>`<span><i class="ak">${aicon(k)}</i>${ALABEL[k]}</span>`).join('')}</div>`:''}`;
 }
 
 function todayItems(){
