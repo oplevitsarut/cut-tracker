@@ -441,8 +441,13 @@ const AICON={
   tennis:'<circle cx="12" cy="12" r="8.5"/><path d="M6 6c3.2 3.4 3.2 8.6 0 12M18 6c-3.2 3.4-3.2 8.6 0 12"/>',
   walk:'<ellipse cx="8.5" cy="8" rx="2.3" ry="3.5"/><path d="M7.4 13.5h2.3"/><ellipse cx="15.5" cy="12.5" rx="2.3" ry="3.5"/><path d="M14.4 18h2.3"/>',
   done:'<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  fast16:'<path d="M7 3.5h10M7 20.5h10M8 3.5c0 4 4 5 4 8.5s-4 4.5-4 8.5M16 3.5c0 4-4 5-4 8.5s4 4.5 4 8.5"/>',
+  fast18:'<path d="M12 21c-3.6 0-6-2.4-6-5.6 0-3.4 2.6-5 3.4-8.4 1.8 1.2 2.6 3 2.6 4.6 1-.6 1.6-1.8 1.8-3 1.8 1.6 4.2 4 4.2 6.8 0 3.2-2.4 5.6-6 5.6z"/>',
+  fast20:'<path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z"/>',
 };
-const ALABEL={run:'Run',treadmill:'Treadmill walk',strength:'Strength',badminton:'Badminton',tennis:'Tennis',walk:'Walk',done:'Workout done'};
+// Fasting days: hourglass for 16 h, flame for 18 h or more, star for 20 h or more
+const fastKind = d => { const h=longestFast(d); return h>=20?'fast20':h>=18?'fast18':'fast16'; };
+const ALABEL={fast16:'16 h',fast18:'18 h or more',fast20:'20 h or more',run:'Run',treadmill:'Treadmill walk',strength:'Strength',badminton:'Badminton',tennis:'Tennis',walk:'Walk',done:'Workout done'};
 const aicon=k=>`<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${AICON[k]}</svg>`;
 // What was done on a day, most important first: run, treadmill, strength, badminton, tennis, walk
 function dayKinds(d){ const x=S.days[d], k=new Set();
@@ -457,8 +462,8 @@ function calendar(key, fn){
   let cells=['M','T','W','T','F','S','S'].map(h=>`<div class="h">${h}</div>`).join(''), hits=0, miss=0, seen=new Set();
   for(let i=0;i<42;i++){ const d=addDays(start,i); if(i>=35 && d.slice(0,7)!==m) break;
     if(d.slice(0,7)!==m){ cells+='<div></div>'; continue; } const st=fn(d); if(st==='hit') hits++; if(st==='miss') miss++;
-    const ks= key==='plan'&&st==='hit'? dayKinds(d):[]; ks.forEach(k=>seen.add(k));
-    cells+= ks.length? `<div class="c hit ${d===today()?'now':''}"${tipAttr(dlabel(d)+'  '+ks.map(k=>ALABEL[k]).join(', '))}>${aicon(ks[0])}</div>`
+    const ks= st!=='hit'? [] : key==='plan'? dayKinds(d) : [fastKind(d)]; ks.forEach(k=>seen.add(k));
+    cells+= ks.length? `<div class="c hit ${d===today()?'now':''}"${tipAttr(dlabel(d)+'  '+(key==='fast'? hm(longestFast(d)*36e5)+' fast' : ks.map(k=>ALABEL[k]).join(', ')))}>${aicon(ks[0])}</div>`
       : `<div class="c ${st} ${d===today()?'now':''} ${d>today()?'fut':''}">${+d.slice(8)}</div>`; }
   return `<div class="calhead"><button class="round" aria-label="Previous month" onclick="shiftCal('${key}',-1)">${IC.left}</button><b>${label}</b><button class="round" aria-label="Next month" onclick="shiftCal('${key}',1)">${IC.right}</button></div>
   <div class="cal">${cells}</div>
