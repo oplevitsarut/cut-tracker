@@ -521,6 +521,7 @@ function renderDash(){
   ${brand()}
   <h1 class="greet">${greeting()}</h1>
   <p class="lede">${finding(items)}</p>
+  ${weekCard()}
   <div class="panel">
     <div class="ph"><h2>Today</h2><span class="meta">${now.toLocaleDateString(undefined,{weekday:'short'})} ${now.getDate()} ${MON[now.getMonth()]} · ${n} of ${of} done</span></div>
     <div class="lead"><span class="fig num ${left<0?'neg':''}">${fmt0(Math.abs(left))}</span><span class="unit">kcal ${left<0?'over':'left'} of ${fmt0(target)}</span></div>
@@ -568,6 +569,48 @@ function renderDash(){
       <div><div class="l">16:8 fasts</div><div class="v num">${fDone}<small> / 7</small></div></div>
       <div><div class="l">Zone 2</div><div class="v num">${z2}<small> / 150 min</small></div></div>
     </div>
+  </div>`;
+}
+
+// Monday review: last week (Mon to Sun) against the week before and the goal
+function isReviewDay(){ return new Date(today()+'T12:00:00').getDay()===1; }
+function weekCard(){
+  if(!isReviewDay()) return '';
+  const st=S.settings, a=addDays(mondayOf(today()),-7), wk=[...Array(7)].map((_,i)=>addDays(a,i)), prev=wk.map(d=>addDays(d,-7));
+  const mean=v=>{ v=v.filter(x=>x!=null&&!isNaN(x)); return v.length? v.reduce((p,q)=>p+q,0)/v.length : null; };
+  const val=(d,k)=>S.days[d]&&S.days[d][k]!==''&&S.days[d][k]!=null? +S.days[d][k] : null;
+  const w1=mean(wk.map(d=>val(d,'weight'))), w0=mean(prev.map(d=>val(d,'weight')))??(st.startDate>=prev[0]?+st.startWeight:null);
+  const weeks=Math.max(1,(dnum(st.targetDate)-dnum(st.startDate))/7), goalW=(+st.startWeight-(+st.goalWeight))/weeks;
+  const dw= w1!=null&&w0!=null? w1-w0 : null;
+  const f1=mean(wk.map(d=>val(d,'fat'))), f0=mean(prev.map(d=>val(d,'fat')));
+  const defs=wk.map(deficit).filter(v=>v!=null), avgDef=mean(defs);
+  const done=wk.filter(isDone).length, plan=S.plan.filter(p=>p.type!=='rest').length, z2=wk.reduce((p,d)=>p+z2Minutes(d),0);
+  const fasts=wk.filter(d=>fastStatus(d)==='hit').length, slp=mean(wk.map(d=>val(d,'sleep')));
+  const pace=ds=>{ const r=ds.flatMap(runsOn).filter(inZone2); return r.length? r.reduce((p,x)=>p+x.secs,0)/r.reduce((p,x)=>p+x.km,0)/60 : null; };
+  const p1=pace(wk), p0=pace(prev);
+  const ch=(v,f,u)=> v==null?'':` · ${v<=0?'−':'+'}${f(Math.abs(v))}${u}`;
+  const rows=[];
+  if(f1!=null) rows.push(['Body fat', f0!=null?`${fmt1(f1-f0<=0?f0-f1:f1-f0)} points ${f1<=f0?'down':'up'} on the week before`:'First week of readings', `${fmt1(f1)}<small>%</small>`, f0!=null&&f1>f0+0.3]);
+  rows.push(['Daily deficit', defs.length?`${defs.length} of 7 days logged · goal 750`:'No food logged', avgDef==null?'—':`${fmt0(avgDef)}<small>kcal</small>`, avgDef!=null&&avgDef<0]);
+  rows.push(['Workouts', `${z2} of 150 zone 2 minutes · plan ${plan} a week`, `${done}<small>${done===1?'day':'days'}</small>`, false]);
+  if(p1!=null) rows.push(['Zone 2 pace', p0!=null?`${Math.abs(Math.round((p0-p1)*60))} s ${p1<=p0?'faster':'slower'} than the week before`:`Goal ${S.settings.paceGoal||'10:00'} /km`, `${mmss(p1)}<small>/km</small>`, false]);
+  rows.push(['16:8 fasts', 'Days you reached 16 hours', `${fasts}<small>/ 7</small>`, false]);
+  if(slp!=null) rows.push(['Sleep', 'Nightly average', hmh(slp), slp<6]);
+  // One thing to work on this week, most important first
+  let next='';
+  if(avgDef!=null&&avgDef<500) next=`Deficit averaged ${fmt0(avgDef)} kcal. Aim for 750 by logging every meal.`;
+  else if(defs.length<5) next=`Food was logged on ${defs.length} of 7 days. More logged days make the numbers more reliable.`;
+  else if(done<plan) next=`${plan-done} planned workout${plan-done>1?'s were':' was'} missed. Book them in your calendar this week.`;
+  else if(z2<150) next=`Zone 2 reached ${z2} of 150 minutes. Add 10 minutes to each jog.`;
+  else if(slp!=null&&slp<6.5) next=`Sleep averaged ${hmh(slp)}. Short nights make hunger harder to manage.`;
+  else next='Every target was hit. Keep the same plan this week.';
+  const lead = dw==null? `<span class="fig num">—</span><span class="unit">weigh in this week to compare</span>`
+    : `<span class="fig num ${dw>0?'neg':''}">${dw<=0?'−':'+'}${fmt1(Math.abs(dw))}</span><span class="unit">kg · goal pace −${fmt1(goalW)} kg</span>`;
+  return `<div class="panel">
+    <div class="ph"><h2>Last week</h2><span class="meta">${dlabel(wk[0])} to ${dlabel(wk[6])}</span></div>
+    <div class="lead">${lead}</div>
+    <ul class="rows">${rows.map(r=>`<li><div class="grow"><div class="t">${r[0]}</div><div class="s">${r[1]}</div></div><div class="fig num ${r[3]?'neg':''}">${r[2]}</div></li>`).join('')}</ul>
+    <p class="note"><b>This week:</b> ${next}</p>
   </div>`;
 }
 
