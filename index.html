@@ -241,7 +241,7 @@ function dnum(s){ return new Date(s+'T12:00:00').getTime()/864e5; }
 function load(){
   let s=null; try{ s=JSON.parse(localStorage.getItem(KEY)); }catch(e){}
   if(!s) s={};
-  s.settings = Object.assign({sex:'male', age:25, z2lo:116, z2hi:145, paceGoal:'10:00', paceGoalDate:'2026-12-31', height:177, startWeight:113.5, goalWeight:83.5,
+  s.settings = Object.assign({sex:'male', age:25, z2lo:116, z2hi:145, paceGoal:'10:00', paceGoalDate:'2026-12-31', stepGoal:8000, height:177, startWeight:113.5, goalWeight:83.5,
     name:'', startDate:'2026-11-03', targetDate:'2027-05-03', activity:1.2, calorieTarget:'', proteinTarget:''}, s.settings||{});
   s.days = s.days||{}; s.plan = s.plan||DEFAULT_PLAN.map(p=>({...p})); s.plan.forEach((p,i)=>{ const d=DEFAULT_PLAN[i]; if(p.min===undefined && d && d.min && p.name===d.name && p.detail===d.detail){ p.min=d.min; if(d.long) p.long=true; } });
   s.runs = s.runs||{};
@@ -481,6 +481,7 @@ function todayItems(){
     {done:prot>=pt, title:`Protein ${pt} g`, sub:prot>=pt?'Target reached':`${fmt0(pt-prot)} g to go`, fig:`${fmt0(prot)} g`, go:'log'},
     sess.type==='rest'? {done:false, rest:true, title:esc(sess.name), sub:esc(sess.detail), fig:'', go:'plan'}
       : {done:isDone(t), title:esc(sess.name), sub:isDone(t)?'Done':esc(sess.detail), fig:'', go:'plan'},
+    ...(hasSteps()? [{done:(+x.steps||0)>=stepGoal(), title:`Walk ${fmt0(stepGoal())} steps`, sub:(+x.steps||0)>=stepGoal()?'Goal reached':`${fmt0(stepGoal()-(+x.steps||0))} to go`, fig:fmt0(+x.steps||0), go:'log'}] : []),
     {done:fastHit, title:'16:8 fast', sub: fastHit?'16 hours done':fastNow?`16 h at ${clock(S.fastStart+FAST_H*36e5)}`:'Start after your last meal', fig:fastNow?hm(el):'', go:'fast'},
   ];
 }
@@ -561,6 +562,7 @@ function renderDash(){
     ${barChart(defs,{ref:{value:750,label:'Goal 750'}, every:3})}
     <p class="note">About <b>${fmt1(Math.max(0,allDef)/KCAL_PER_KG)} kg</b> of fat burned on the days you logged food (7,700 kcal per kg).</p>
   </div>
+  ${stepsCard()}
   ${sleepCard()}
   <div class="panel">
     <div class="ph"><h2>This week</h2><span class="meta">since Mon ${dlabel(mon)}</span></div>
@@ -596,6 +598,10 @@ function weekCard(){
   if(p1!=null) rows.push(['Zone 2 pace', p0!=null?`${Math.abs(Math.round((p0-p1)*60))} s ${p1<=p0?'faster':'slower'} than the week before`:`Goal ${S.settings.paceGoal||'10:00'} /km`, `${mmss(p1)}<small>/km</small>`, false]);
   rows.push(['16:8 fasts', 'Days you reached 16 hours', `${fasts}<small>/ 7</small>`, false]);
   if(slp!=null) rows.push(['Sleep', 'Nightly average', hmh(slp), slp<6]);
+  const st1=mean(wk.map(d=>val(d,'steps')));
+  if(st1!=null) rows.push(['Steps', `Daily average · goal ${fmt0(stepGoal())}`, fmt0(st1), false]);
+  const r1=mean(wk.map(d=>val(d,'rhr'))), r0=mean(prev.map(d=>val(d,'rhr')));
+  if(r1!=null) rows.push(['Resting heart rate', r0!=null?`${fmt1(Math.abs(r1-r0))} bpm ${r1<=r0?'lower':'higher'} than the week before`:'Weekly average', `${fmt0(r1)}<small>bpm</small>`, false]);
   // One thing to work on this week, most important first
   let next='';
   if(avgDef!=null&&avgDef<500) next=`Deficit averaged ${fmt0(avgDef)} kcal. Aim for 750 by logging every meal.`;
@@ -611,6 +617,41 @@ function weekCard(){
     <div class="lead">${lead}</div>
     <ul class="rows">${rows.map(r=>`<li><div class="grow"><div class="t">${r[0]}</div><div class="s">${r[1]}</div></div><div class="fig num ${r[3]?'neg':''}">${r[2]}</div></li>`).join('')}</ul>
     <p class="note"><b>This week:</b> ${next}</p>
+  </div>`;
+}
+
+// Steps: today so far, and the last value imported for each past day
+const stepGoal = () => +S.settings.stepGoal || 8000;
+function hasSteps(){ return sortedDates().some(d=>S.days[d].steps!=null&&S.days[d].steps!==''); }
+function stepsCard(){
+  const t=today(), days=[...Array(14)].map((_,i)=>addDays(t,i-13)), sv=d=>S.days[d]&&S.days[d].steps!==''&&S.days[d].steps!=null? +S.days[d].steps : null, g=stepGoal();
+  if(!hasSteps()) return `<div class="panel"><div class="ph"><h2>Steps</h2><span class="meta">from Health</span></div><div class="empty">Add the steps step to your Shortcut to track a daily goal of ${fmt0(g)}.</div></div>`;
+  const past=days.slice(0,-1).filter(d=>sv(d)!=null), avg=past.length? past.reduce((a,d)=>a+sv(d),0)/past.length : null, hit=past.filter(d=>sv(d)>=g).length;
+  const bars=days.map(d=>({label:String(+d.slice(8)), value:sv(d), color:'var(--text)', tip:dlabel(d)+'  '+(sv(d)==null?'no steps data':fmt0(sv(d))+' steps')}));
+  return `<div class="panel">
+    <div class="ph"><h2>Steps</h2><span class="meta">${avg==null?'last 14 days':'avg '+fmt0(avg)+' a day'}</span></div>
+    <div class="lead"><span class="fig num">${fmt0(sv(t)||0)}</span><span class="unit">today · goal ${fmt0(g)}</span></div>
+    <div class="legend"><span>${barKey('var(--text)')}Steps</span><span>${lineKey('var(--text)',true,1)}Goal ${fmt0(g)}</span></div>
+    ${barChart(bars,{ref:{value:g,label:''}, fmt:v=>v>=1000?Math.round(v/1000)+'k':String(v), every:3, H:140})}
+    ${past.length>=3?`<p class="note">Goal reached on <b>${hit} of ${past.length}</b> days. Each day keeps the number from the last time you ran the Shortcut.</p>`:''}
+  </div>`;
+}
+// Resting heart rate: falls as zone 2 fitness improves
+function rhrCard(){
+  const pts=sortedDates().filter(d=>+S.days[d].rhr).map(d=>({d, y:+S.days[d].rhr})), t=today();
+  if(!pts.length) return `<div class="panel"><div class="ph"><h2>Resting heart rate</h2><span class="meta">from Health</span></div><div class="empty">Add the resting heart rate step to your Shortcut. It drops as your zone 2 fitness improves.</div></div>`;
+  const from=addDays(t,-59), win=pts.filter(p=>p.d>=from), tr=trend(win), last=tr[tr.length-1];
+  const old=tr.find(p=>dnum(p.d)>=dnum(last.d)-28), diff= old&&dnum(last.d)-dnum(old.d)>=14? last.y-old.y : null;
+  const xFrom= win[0].d<addDays(t,-13)? win[0].d : addDays(t,-13);
+  return `<div class="panel">
+    <div class="ph"><h2>Resting heart rate</h2><span class="meta">7-day average</span></div>
+    <div class="lead"><span class="fig num">${fmt0(last.y)}</span><span class="unit">bpm${diff==null?'':` · ${fmt0(Math.abs(diff))} ${diff<=0?'lower':'higher'} than 4 weeks ago`}</span></div>
+    <div class="legend"><span>${lineKey('var(--accent)')}7-day average</span><span>${lineKey('var(--muted)',false,1)}Daily</span></div>
+    <div class="panel inner">${lineChart([
+      {points:win, color:'var(--muted)', width:1, tip:true},
+      {points:tr, color:'var(--accent)', width:2, end:true, endFmt:v=>fmt0(v)},
+    ],{yFmt:v=>fmt0(v), tipFmt:v=>fmt0(v)+' bpm', xFrom, xTo:t, W:CW()-24, H:150})}</div>
+    ${diff==null?'<p class="note">After a few weeks this shows whether it is falling. A drop of 3 to 5 bpm means your base fitness is improving.</p>':''}
   </div>`;
 }
 
@@ -689,6 +730,8 @@ function renderLog(){ setTimeout(renderPhoto,0);
       <div><label for="act">Active kcal</label><input inputmode="numeric" id="act" value="${esc(x.active)}" placeholder="0"></div>
       <div><label for="fat">Body fat, %</label><input inputmode="decimal" id="fat" value="${esc(x.fat)}" placeholder="\u2014"></div>
       <div><label for="slp">Sleep, h</label><input inputmode="decimal" id="slp" value="${x.sleep?hmh(+x.sleep).replace('h ',':').replace('m',''):''}" placeholder="7:30"></div>
+      <div><label for="stp">Steps</label><input inputmode="numeric" id="stp" value="${esc(x.steps)}" placeholder="0"></div>
+      <div><label for="rhr">Resting HR, bpm</label><input inputmode="numeric" id="rhr" value="${esc(x.rhr)}" placeholder="\u2014"></div>
     </div>
     <div class="actions"><button onclick="saveBody()">Save</button></div>
   </div>
@@ -764,6 +807,7 @@ function renderPlan(){
     ${barChart(z2,{ref:{value:150,label:'Goal 150'}, every:2})}
     <p class="note">Runs and treadmill walks with an average heart rate of ${lo}–${hi} bpm.</p>
   </div>
+  ${rhrCard()}
   ${paceCard()}
   ${runCard()}
   ${otherCard()}`;
@@ -882,6 +926,7 @@ function renderSettings(){
       <div class="fields"><div>${f('startWeight','Start, kg','number','step="0.1"')}</div><div>${f('goalWeight','Goal, kg','number','step="0.1"')}</div></div>
       <div class="fields"><div>${f('startDate','Start date','date')}</div><div>${f('targetDate','Target date','date')}</div></div>
       <div class="fields"><div>${f('calorieTarget','Calories','number',`placeholder="auto ${calorieTarget()}"`)}</div><div>${f('proteinTarget','Protein, g','number',`placeholder="auto ${proteinTarget()}"`)}</div></div>
+      <div class="fields"><div>${f('stepGoal','Steps a day','number','inputmode="numeric"')}</div><div></div></div>
       <div class="actions"><button class="primary" onclick="saveSettings()">Save settings</button></div>
     </div>
   </div>
@@ -921,7 +966,7 @@ function renderSettings(){
 }
 
 function num(id){ const v=$(id).value.trim().replace(',','.'); return v===''?'':+v; }
-function saveBody(){ const x=day(logDate); x.weight=num('#w'); x.active=num('#act'); const sl=parseSleep($('#slp').value); x.sleep=sl>0&&sl<16?Math.round(sl*100)/100:''; const bf=parseFat($('#fat').value); x.fat=bf||''; save(); toast('Saved'); renderLog(); }
+function saveBody(){ const x=day(logDate); x.weight=num('#w'); x.active=num('#act'); const sl=parseSleep($('#slp').value); x.sleep=sl>0&&sl<16?Math.round(sl*100)/100:''; const bf=parseFat($('#fat').value); x.fat=bf||''; x.steps=num('#stp'); const hr=+num('#rhr'); x.rhr=hr>=30&&hr<=120?hr:''; save(); toast('Saved'); renderLog(); }
 function addMeal(){ const n=$('#mn').value.trim(), k=num('#mk'); if(!n||k===''){toast('Add a name and calories');return;}
   day(logDate).meals.push({name:n,kcal:k,protein:num('#mp')}); save(); renderLog(); }
 function addWorkout(){ const s=$('#wt'); const m=num('#wm'); if(m===''){toast('Add minutes');return;}
@@ -1078,13 +1123,15 @@ function parseSleep(v){ v=String(v??'').trim().toLowerCase().replace(/ชั่�
 function parseFat(v){ const n=parseFloat(String(v??'').replace(',','.').replace(/[^0-9.]/g,'')); if(!(n>0)) return null; const p=n<1?n*100:n; return p>=3&&p<=70? Math.round(p*10)/10 : null; }
 const hmh = h => { const m=Math.round(h*60); return Math.floor(m/60)+'h '+String(m%60).padStart(2,'0')+'m'; };
 function importFromUrl(){
-  const q=new URLSearchParams(location.search); if(!q.has('weight')&&!q.has('active')&&!q.has('sleep')&&!q.has('fat')) return;
+  const q=new URLSearchParams(location.search); if(!['weight','active','sleep','fat','steps','rhr'].some(k=>q.has(k))) return;
   const d=/^\d{4}-\d{2}-\d{2}$/.test(q.get('date')||'')?q.get('date'):today(); const x=day(d); const got=[];
   const num=k=>parseFloat(String(q.get(k)||'').replace(',','.').replace(/[^0-9.]/g,''));
   const w=num('weight'); if(w>20&&w<400){ x.weight=Math.round(w*10)/10; got.push('weight'); }
   const a=num('active'); if(a>=0&&a<10000){ x.active=Math.round(a); got.push('active calories'); }
   const sl=parseSleep(q.get('sleep')); if(sl>0&&sl<16){ x.sleep=Math.round(sl*100)/100; got.push('sleep'); }
   const bf=parseFat(q.get('fat')); if(bf){ x.fat=bf; got.push('body fat'); }
+  const sp=num('steps'); if(sp>=0&&sp<100000){ x.steps=Math.round(sp); got.push('steps'); }
+  const hr=num('rhr'); if(hr>=30&&hr<=120){ x.rhr=Math.round(hr); got.push('resting heart rate'); }
   save(); history.replaceState(null,'',location.pathname); if(got.length) toast('Imported '+got.join(', ').replace(/, ([^,]*)$/,' and $1')+' from Health');
 }
 
