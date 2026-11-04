@@ -104,7 +104,11 @@ h2{margin:0;font:600 15px/1.3 var(--sans)}
 .rows .s{font-size:13px;color:var(--muted)}
 .rows .grow{flex:1;min-width:0}
 .rows .fig{flex:none;text-align:right;font-variant-numeric:tabular-nums}
-.rows .fig small{display:block;font-size:12px;color:var(--muted)}
+.rows .fig small{font-size:12px;color:var(--muted);margin-left:3px}
+.rows .s.clip{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+details.more{margin-top:12px;font-size:13px;color:var(--muted)}
+details.more summary{cursor:pointer;color:var(--text);min-height:32px;display:flex;align-items:center}
+details.more p{margin:4px 0 0}
 .rows li.on{background:var(--active);border-radius:12px;margin:0 -10px;padding-left:10px;padding-right:10px;border-top-color:transparent}
 .rows li.on + li{border-top-color:transparent}
 .dot{width:24px;height:24px;flex:none;border-radius:50%;border:1.5px solid var(--control);display:flex;align-items:center;justify-content:center}
@@ -181,7 +185,7 @@ svg.chart text.lab{fill:var(--text);font-weight:500}
 .set{padding-top:20px;margin-top:20px;border-top:1px solid var(--rule)}
 .set > h2{font-size:16px;font-weight:500}
 .set > p{margin:4px 0 12px;color:var(--muted);font-size:14px}
-.set .panel label:first-child{margin-top:0}
+.set .panel > label:first-child,.set .panel > .fields:first-child label{margin-top:0}
 
 /* Bottom bar */
 nav{position:fixed;left:0;right:0;bottom:0;z-index:5;background:var(--ground);border-top:1px solid var(--border);padding-bottom:env(safe-area-inset-bottom)}
@@ -660,16 +664,16 @@ function renderPlan(){
     <ul class="rows">${S.plan.map((p0,i)=>{ const d=addDays(mon,i), isT=d===t, p=sessionFor(i,d), ok=isDone(d);
       return `<li class="${isT?'on':''}">
         ${p.type==='rest'?'<span class="dot rest"></span>':`<button class="dot ${ok?'ok':''}" aria-label="Mark ${names[i]} done" onclick="S.done['${d}']=${!ok};save();renderPlan()">${ok?IC.check:''}</button>`}
-        <div class="grow"><div class="dayname">${names[i]} ${+d.slice(8)}${isT?' · today':''}</div><div class="t">${esc(p.name)}</div><div class="s">${esc(p.detail)}</div></div>
+        <div class="grow"><div class="dayname">${names[i]} ${+d.slice(8)}${isT?' · today':''}</div><div class="t">${esc(p.name)}</div><div class="s clip">${esc(p.detail)}</div></div>
         <button class="x" style="width:auto;padding:0 6px;font-size:14px" onclick="editDay(${i})">Edit</button></li>`; }).join('')}</ul>
-    <p class="note">The plan grows by itself: jogs get 5 minutes longer every 2 weeks (up to 60, or 90 for the long run), strength goes from 2 to 3 sets after week 2, and every 4th week is easier. Editing a day fixes it at what you type.</p>
+    <details class="more"><summary>How the plan grows</summary><p>Jogs get 5 minutes longer every 2 weeks (up to 60, or 90 for the long run), strength goes from 2 to 3 sets after week 2, and every 4th week is easier. Editing a day fixes it at what you type.</p></details>
   </div>
   <div class="panel"><div class="ph"><h2>Workout calendar</h2><span class="meta">${stk?stk+' day streak':''}</span></div>${calendar('plan', workoutStatus)}</div>
   <div class="panel">
     <div class="ph"><h2>Zone 2 minutes</h2><span class="meta">per week · ${lo}–${hi} bpm</span></div>
     <div class="legend"><span>${barKey('var(--accent)')}This week</span><span>${barKey('var(--text)')}Past weeks</span><span>${lineKey('var(--text)',true,1)}Goal 150 min</span></div>
     ${barChart(z2,{ref:{value:150,label:'Goal 150'}, every:2})}
-    <p class="note">Runs and treadmill sessions count when their average heart rate is ${lo}–${hi} bpm (change it in Settings). Strength, badminton and tennis don’t count here.</p>
+    <p class="note">Runs and treadmill walks with an average heart rate of ${lo}–${hi} bpm.</p>
   </div>
   ${paceCard()}
   ${runCard()}
@@ -722,9 +726,9 @@ function runCard(){
 function otherCard(){
   const acts=Object.values(S.runs||{}).filter(r=>actKind(r)!=='run').sort((a,b)=>a.date<b.date?1:-1);
   if(!acts.length) return `<div class="panel"><div class="ph"><h2>Other activities</h2><span class="meta">from Strava</span></div><div class="empty">Treadmill walks, badminton and tennis from Strava show here.</div></div>`;
-  const mon=mondayOf(today()), wk=acts.filter(r=>r.date>=mon), mins=f=>Math.round(wk.filter(f).reduce((a,r)=>a+r.secs/60,0));
+  const mon=mondayOf(today()), wk=acts.filter(r=>r.date>=addDays(mon,-21)), mins=f=>Math.round(wk.filter(f).reduce((a,r)=>a+r.secs/60,0));
   const cells=[['Treadmill',r=>actKind(r)==='treadmill'],['Badminton',r=>actKind(r)==='badminton'],['Tennis',r=>actKind(r)==='tennis'],['Other',r=>!['treadmill','badminton','tennis'].includes(actKind(r))]];
-  return `<div class="panel"><div class="ph"><h2>Other activities</h2><span class="meta">this week, minutes</span></div>
+  return `<div class="panel"><div class="ph"><h2>Other activities</h2><span class="meta">last 4 weeks</span></div>
     <div class="strip four" style="--n:4">${cells.map(([l,f])=>`<div><div class="l">${l}</div><div class="v num">${mins(f)}<small> min</small></div></div>`).join('')}</div>
     <ul class="rows">${acts.slice(0,5).map(r=>{ const k=actKind(r), z=k==='treadmill'&&r.hr&&inZone2(r);
       return `<li><div class="grow"><div class="t">${KINDS[k]}</div><div class="s">${dlabel(r.date)}${r.hr?` · ${r.hr} bpm`:''}${z?' · counts as zone 2':''}</div></div><div class="fig num">${Math.round(r.secs/60)}<small>min</small></div></li>`; }).join('')}</ul>
@@ -770,7 +774,7 @@ function renderSettings(){
   ${brand()}
   <h1>Settings</h1>
   <p class="lede">Eating <b>${fmt0(calorieTarget())} kcal</b> and <b>${proteinTarget()} g protein</b> a day${+st.calorieTarget?' (set by you)':', updated as you lose weight'}.</p>
-  <div class="set" style="border-top:0;margin-top:4px;padding-top:4px">
+  <div class="set" style="border-top:0;margin-top:8px;padding-top:12px">
     <h2>You</h2><p>Used to work out what you burn each day.</p>
     <div class="panel">
       ${f('name','First name','text','autocomplete="given-name" placeholder="For the greeting"')}
@@ -793,18 +797,10 @@ function renderSettings(){
     </div>
   </div>
   <div class="set">
-    <h2>Photo calories</h2><p>Your Anthropic API key. It stays on this phone and is left out of backups.</p>
-    <div class="panel">
-      <label for="apikey">API key ${apiKey()?'<span class="pill ok" style="margin-left:6px">Saved</span>':''}</label>
-      <input id="apikey" type="password" autocomplete="off" placeholder="sk-ant-..." value="${esc(apiKey())}">
-      <div class="actions"><button onclick="try{localStorage.setItem(KEY_STORE,$('#apikey').value.trim());toast('Key saved');renderSettings()}catch(e){toast('Could not save')}">Save key</button></div>
-    </div>
-  </div>
-  <div class="set">
     <h2>Running goal</h2><p>The pace you want your zone 2 runs to get under, and by when.</p>
     <div class="panel">
       <div class="fields"><div>${f('paceGoal','Pace, min:sec per km','text','inputmode="decimal" placeholder="10:00"')}</div><div>${f('paceGoalDate','By','date')}</div></div>
-      <div class="actions"><button class="primary" onclick="saveSettings()">Save goal</button></div>
+      <div class="actions"><button onclick="saveSettings()">Save goal</button></div>
     </div>
   </div>
   <div class="set">
@@ -814,7 +810,15 @@ function renderSettings(){
       <div class="actions"><button onclick="stravaSync(true)">Sync now</button><button class="danger" onclick="stravaDisconnect()">Disconnect</button></div>`
     : `<div class="fields"><div><label for="sid">Client ID</label><input id="sid" inputmode="numeric" value="${esc(stravaCfg().id||'')}"></div>
       <div><label for="ssec">Client secret</label><input id="ssec" type="password" autocomplete="off" value="${esc(stravaCfg().secret||'')}"></div></div>
-      <div class="actions"><button class="primary" onclick="stravaConnect()">Connect Strava</button></div>`}
+      <div class="actions"><button onclick="stravaConnect()">Connect Strava</button></div>`}
+    </div>
+  </div>
+  <div class="set">
+    <h2>Photo calories</h2><p>Your Anthropic API key. It stays on this phone and is left out of backups.</p>
+    <div class="panel">
+      <label for="apikey">API key ${apiKey()?'<span class="pill ok" style="margin-left:6px">Saved</span>':''}</label>
+      <input id="apikey" type="password" autocomplete="off" placeholder="sk-ant-..." value="${esc(apiKey())}">
+      <div class="actions"><button onclick="try{localStorage.setItem(KEY_STORE,$('#apikey').value.trim());toast('Key saved');renderSettings()}catch(e){toast('Could not save')}">Save key</button></div>
     </div>
   </div>
   <div class="set">
