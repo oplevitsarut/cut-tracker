@@ -239,7 +239,7 @@ function iso(d){ const z=new Date(d.getTime()-d.getTimezoneOffset()*60000); retu
 function addDays(s,n){ const d=new Date(s+'T12:00:00'); d.setDate(d.getDate()+n); return iso(d); }
 function dnum(s){ return new Date(s+'T12:00:00').getTime()/864e5; }
 function load(){
-  let s=null; try{ s=JSON.parse(localStorage.getItem(KEY)); }catch(e){}
+  let s=null; try{ s=JSON.parse(localStorage.getItem(KEY)); }catch(e){ try{ localStorage.setItem(KEY+'.unreadable', localStorage.getItem(KEY)); }catch(_){} }
   if(!s) s={};
   s.settings = Object.assign({sex:'male', age:25, z2lo:116, z2hi:145, paceGoal:'10:00', paceGoalDate:'2026-12-31', stepGoal:8000, height:177, startWeight:113.5, goalWeight:83.5,
     name:'', startDate:'2026-11-03', targetDate:'2027-05-03', activity:1.2, calorieTarget:'', proteinTarget:''}, s.settings||{});
@@ -523,6 +523,7 @@ function renderDash(){
   <h1 class="greet">${greeting()}</h1>
   <p class="lede">${finding(items)}</p>
   ${weekCard()}
+  ${backupNudge()}
   <div class="panel">
     <div class="ph"><h2>Today</h2><span class="meta">${now.toLocaleDateString(undefined,{weekday:'short'})} ${now.getDate()} ${MON[now.getMonth()]} · ${n} of ${of} done</span></div>
     <div class="lead"><span class="fig num ${left<0?'neg':''}">${fmt0(Math.abs(left))}</span><span class="unit">kcal ${left<0?'over':'left'} of ${fmt0(target)}</span></div>
@@ -956,10 +957,11 @@ function renderSettings(){
     </div>
   </div>
   <div class="set">
-    <h2>Backup</h2><p>Your data lives only on this phone. Export now and then, and save the file to Files or iCloud Drive.</p>
+    <h2>Backup</h2><p>Your data lives only on this phone, and iPhone can clear it. Back up weekly to iCloud Drive.</p>
     <div class="panel">
       <div class="ph"><h2 style="font-weight:500">${sortedDates().length} days logged</h2><span class="meta">${S.fasts.length} fasts · ${Object.keys(S.runs).length} activities</span></div>
-      <div class="actions"><button onclick="exportData()">Export</button><button onclick="$('#imp').click()">Import</button></div>
+      <p class="muted" style="margin:6px 0 0">Last backup: ${S.lastBackup?dlabel(S.lastBackup):'never'}${storageKept===true?' · Kept by iPhone':storageKept===false?' · iPhone may clear it':''}</p>
+      <div class="actions"><button onclick="exportData()">Back up now</button><button onclick="$('#imp').click()">Restore</button></div>
       <input type="file" id="imp" accept="application/json" class="hidden" onchange="importData(this.files[0])">
     </div>
   </div>`;
@@ -1058,11 +1060,44 @@ function delFast(i){ if(!confirm('Delete this fast?')) return; S.fasts.splice(i,
 setInterval(()=>{ if(S.fastStart!=null && !fastForm && !$('#tab-fast').classList.contains('hidden')){ const t=$('#ftimer'); if(t) t.textContent=hm(Date.now()-S.fastStart);
   const el=Date.now()-S.fastStart; if(el>=FAST_H*36e5 && $('#fnote') && !/reached/.test($('#fnote').textContent)) renderFast(); } }, 15000);
 function saveSettings(){ for(const k of Object.keys(S.settings)){ const el=$('#s-'+k); if(el) S.settings[k]=el.value; } save(); toast('Settings saved'); renderAll(); }
-function exportData(){ const b=new Blob([JSON.stringify(S,null,1)],{type:'application/json'}); const a=document.createElement('a');
-  a.href=URL.createObjectURL(b); a.download=`cut-tracker-${today()}.json`; a.click(); }
+function daysSinceBackup(){ return S.lastBackup? Math.round(dnum(today())-dnum(S.lastBackup)) : null; }
+function backupNudge(){
+  const n=daysSinceBackup(); if(n!==null && n<7) return ''; if(!sortedDates().length) return '';
+  return `<div class="panel">
+    <div class="ph"><h2>Back up your data</h2><span class="meta">${n===null?'never backed up':n+' days ago'}</span></div>
+    <p class="muted" style="margin:6px 0 0">iPhone can clear this app's data. A copy in iCloud Drive brings it all back.</p>
+    <div class="actions"><button onclick="exportData()">Back up now</button></div>
+  </div>`;
+}
+async function exportData(){
+  const name=`cut-tracker-${today()}.json`, text=JSON.stringify({...S,lastBackup:today()},null,1);
+  const file=new File([text],name,{type:'application/json'});
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    try{ await navigator.share({files:[file]}); }catch(e){ if(e.name==='AbortError') return; }
+  } else {
+    const a=document.createElement('a'); a.href=URL.createObjectURL(file); a.download=name; a.click();
+  }
+  S.lastBackup=today(); save(); renderAll(); toast('Backup saved');
+}
 function importData(file){ if(!file) return; const r=new FileReader(); r.onload=()=>{ try{ const d=JSON.parse(r.result);
-  if(!d.days||!d.settings) throw 0; if(!confirm('Replace all data on this phone with this backup?')) return;
+  if(!d.days||!d.settings) throw 0; if(!confirm('Add this backup to the app? Days in the backup replace the same days here; everything else is kept.')) return;
+  d.days=Object.assign({},S.days,d.days); d.runs=Object.assign({},S.runs,d.runs||{}); d.done=Object.assign({},S.done,d.done||{});
+  const seen=new Set(), fasts=[]; for(const f of [...(d.fasts||[]),...S.fasts]){ const k=f.start+'|'+f.end; if(!seen.has(k)){ seen.add(k); fasts.push(f); } } d.fasts=fasts;
   localStorage.setItem(KEY,JSON.stringify(d)); S=load(); renderAll(); toast('Backup restored'); }catch(e){ toast('That file is not a backup'); } }; r.readAsText(file); }
+// Ask iPhone to keep this app's data instead of clearing it after 7 days without a visit.
+let storageKept=null;
+function keepStorage(){ const st=navigator.storage; if(!st||!st.persist) return;
+  st.persisted().then(p=>p||st.persist()).then(p=>{ storageKept=!!p; if(!$('#tab-settings').classList.contains('hidden')) renderSettings(); }).catch(()=>{}); }
+// Refill past days from Health in one go: ?weights=2026-11-03:113.5;2026-11-04:113.2 (also steps=, active=)
+function importHistoryFromUrl(){
+  const q=new URLSearchParams(location.search), kinds={weights:['weight',v=>v>20&&v<400,v=>Math.round(v*10)/10], steps:['steps',v=>v>=0&&v<100000,Math.round], active:['active',v=>v>=0&&v<10000,Math.round]};
+  if(!Object.keys(kinds).some(k=>q.has(k))) return; const days=new Set(); let n=0;
+  for(const [k,[field,ok,round]] of Object.entries(kinds)){ if(!q.has(k)) continue;
+    for(const part of q.get(k).split(/[;\n]+/)){ const m=part.trim().match(/^(.+?)\s*[:=]\s*([\d.,]+)/); if(!m) continue;
+      let d=m[1].trim(); if(!/^\d{4}-\d{2}-\d{2}$/.test(d)){ const t=new Date(d); if(isNaN(t)) continue; d=iso(t); }
+      const v=parseFloat(m[2].replace(',','.')); if(!ok(v)) continue; day(d)[field]=round(v); days.add(d); n++; } }
+  save(); history.replaceState(null,'',location.pathname); toast(n?`Refilled ${days.size} days from Health`:'Nothing to refill');
+}
 
 // ---------- Import from iPhone Shortcut via URL: ?date=YYYY-MM-DD&weight=113.2&active=540 ----------
 // ---------- Strava ----------
@@ -1143,7 +1178,7 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('main > section').forEach(s=>s.classList.toggle('hidden',s.id!=='tab-'+b.dataset.tab));
   fastForm=null; ({dash:renderDash,log:renderLog,plan:renderPlan,fast:renderFast,settings:renderSettings})[b.dataset.tab](); window.scrollTo(0,0);
 });
-importFromUrl(); renderAll();
+importHistoryFromUrl(); importFromUrl(); keepStorage(); renderAll();
 stravaCallback().then(handled=>{ if(!handled) stravaSync(false); });
 </script>
 </body>
